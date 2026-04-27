@@ -1,8 +1,8 @@
 """
-Tree-sitter bindings for ggSQL
+Tree-sitter bindings for ggsql
 
 This package provides Python bindings for the tree-sitter-ggsql grammar.
-ggSQL is a SQL extension for declarative data visualization based on the Grammar of Graphics.
+ggsql is a SQL extension for declarative data visualization based on the Grammar of Graphics.
 """
 
 from tree_sitter import Language
@@ -27,12 +27,9 @@ except ImportError:
 
         try:
             # Use tree-sitter to compile the language
-            language = tree_sitter.Language.build_library(
-                LIB_PATH,
-                [grammar_path]
-            )
+            language = tree_sitter.Language.build_library(LIB_PATH, [grammar_path])
         except Exception as e:
             raise ImportError(f"Could not load tree-sitter-ggsql language: {e}")
 
-__version__ = "0.1.0"
+__version__ = "0.2.7"
 __all__ = ["language"]

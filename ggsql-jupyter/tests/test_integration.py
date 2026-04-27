@@ -158,8 +158,8 @@ class TestExecution:
         """Test executing a query with visualization."""
         code = """
         SELECT 1 as x, 2 as y
-        VISUALISE AS PLOT
-        WITH point USING x = x, y = y
+        VISUALISE x, y
+        DRAW point
         """
         msg_id = client.execute(code, silent=False, store_history=True)
 
@@ -185,10 +185,10 @@ class TestExecution:
 
         # Should have Vega-Lite MIME type
         data = content["data"]
-        assert "application/vnd.vegalite.v5+json" in data
+        assert "application/vnd.vegalite.v6+json" in data
 
         # Check Vega-Lite spec structure
-        vega_spec = data["application/vnd.vegalite.v5+json"]
+        vega_spec = data["application/vnd.vegalite.v6+json"]
         assert "$schema" in vega_spec
         assert "data" in vega_spec
         assert "mark" in vega_spec or "layer" in vega_spec

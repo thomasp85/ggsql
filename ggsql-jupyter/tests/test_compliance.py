@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 
-class GGSQLKernelTests(jkt.KernelTests):
+class ggsqlKernelTests(jkt.KernelTests):
     """Compliance tests for ggsql-jupyter kernel."""
 
     # Kernel name (will be overridden to use custom command)
@@ -91,8 +91,8 @@ class GGSQLKernelTests(jkt.KernelTests):
 
         code = """
         SELECT 1 as x, 2 as y
-        VISUALISE AS PLOT
-        WITH point USING x = x, y = y
+        VISUALISE x, y
+        DRAW point
         """
 
         reply, output_msgs = self.execute_helper(code=code)
@@ -111,10 +111,10 @@ class GGSQLKernelTests(jkt.KernelTests):
 
         # Check MIME types
         data = execute_result["content"]["data"]
-        self.assertIn("application/vnd.vegalite.v5+json", data)
+        self.assertIn("application/vnd.vegalite.v6+json", data)
 
         # Verify Vega-Lite spec structure
-        vega_spec = data["application/vnd.vegalite.v5+json"]
+        vega_spec = data["application/vnd.vegalite.v6+json"]
         self.assertIn("$schema", vega_spec)
         self.assertIn("data", vega_spec)
 
@@ -252,7 +252,7 @@ def setup_module():
     # Create kernel spec
     kernel_spec = {
         "argv": [str(binary_path), "-f", "{connection_file}"],
-        "display_name": "ggSQL",
+        "display_name": "ggsql",
         "language": "ggsql",
     }
 

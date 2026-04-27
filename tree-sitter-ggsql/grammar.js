@@ -1,5 +1,5 @@
 /**
- * Minimal ggSQL grammar without external scanner
+ * Minimal ggsql grammar without external scanner
  *
  * Uses a simple regex to capture SQL portion as opaque text
  */
@@ -25,7 +25,7 @@ module.exports = grammar({
     // Main entry point - SQL followed by VISUALISE statements
     query: $ => seq(
       optional($.sql_portion),
-      repeat1($.visualise_statement)
+      repeat($.visualise_statement)
     ),
 
     // SQL portion - multiple statements separated by semicolons
@@ -48,8 +48,28 @@ module.exports = grammar({
       $.insert_statement,
       $.update_statement,
       $.delete_statement,
+      $.from_statement,  // DuckDB-style FROM-first: `FROM t` ≡ `SELECT * FROM t`
       $.other_sql_statement  // Fallback for other SQL
     ),
+
+    // Bare FROM as a terminal SQL statement (DuckDB-style). Starts with a
+    // from_clause and optionally consumes trailing tokens (WHERE, GROUP BY,
+    // ORDER BY, LIMIT, etc.) up to VISUALISE — mirrors select_body's permissive
+    // token bag so the same trailing-SQL constructs work after a bare FROM.
+    from_statement: $ => prec.right(seq(
+      $.from_clause,
+      repeat(choice(
+        $.window_function,
+        $.cast_expression,
+        $.function_call,
+        $.non_from_sql_keyword,
+        $.string,
+        $.number,
+        ',', '*', '.', '=', '<', '>', '!', '+', '-', '/', '%', '|', '&', '^', '~', '::',
+        $.subquery,
+        $.identifier
+      ))
+    )),
 
     // SELECT statement
     select_statement: $ => prec(2, seq(
@@ -58,29 +78,43 @@ module.exports = grammar({
     )),
 
     select_body: $ => prec.left(repeat1(choice(
+      $.from_clause,
+      $.window_function,  // Window functions like ROW_NUMBER() OVER (...)
+      $.cast_expression,  // CAST(expr AS type), TRY_CAST(expr AS type)
+      $.function_call,    // Regular function calls like COUNT(), SUM()
       $.sql_keyword,
       $.string,
       $.number,
-      ',', '*', '.', '=', '<', '>', '!',
+      ',', '*', '.', '=', '<', '>', '!', '+', '-', '/', '%', '|', '&', '^', '~', '::',
       $.subquery,
-      token(/[^\s;(),'"VvWwSsCcIiUuDd]+/),  // Other SQL tokens, excluding keyword start letters
       $.identifier
     ))),
 
-    // WITH statement (CTEs) - WITH must be followed by SELECT
-    with_statement: $ => prec(2, seq(
+    // WITH statement (CTEs) - tail is an optional SELECT or bare FROM
+    // (`WITH cte AS (...) FROM cte` is DuckDB-style FROM-first after WITH).
+    with_statement: $ => prec.right(2, seq(
       caseInsensitive('WITH'),
       optional(caseInsensitive('RECURSIVE')),
       $.cte_definition,
       repeat(seq(',', $.cte_definition)),
-      optional($.select_statement)  // WITH can optionally be followed by SELECT
+      optional(choice($.select_statement, $.from_statement))
     )),
 
     cte_definition: $ => seq(
       $.identifier,
+      optional(seq(          // Optional column list: df(x, y, id)
+        '(',
+        $.identifier,
+        repeat(seq(',', $.identifier)),
+        ')'
+      )),
       caseInsensitive('AS'),
       '(',
-      $.select_statement,
+      choice(
+        $.with_statement,    // Allow nested CTEs
+        $.select_statement,
+        $.subquery_body      // VALUES (...) and other non-SELECT bodies
+      ),
       ')'
     ),
 
@@ -95,7 +129,8 @@ module.exports = grammar({
         $.subquery,
         ',', '(', ')', '*', '.', '=',
         /[^\s;(),'"]+/
-      ))
+      )),
+      optional($.select_statement)
     )),
 
     // INSERT statement
@@ -141,11 +176,11 @@ module.exports = grammar({
     )),
 
     // Other SQL statements - DO NOT match if starts with keywords we handle
-    // explicitly (WITH, SELECT, CREATE, INSERT, UPDATE, DELETE, VISUALISE)
+    // explicitly (WITH, SELECT, CREATE, INSERT, UPDATE, DELETE, VISUALISE, FROM).
     other_sql_statement: $ => {
-      const exclude_pattern = /[^\s;(),'"WwSsCcIiUuDdVv]+/;
+      const exclude_pattern = /[^\s;(),'"WwSsCcIiUuDdVvFf]+/;
       return prec(-1, repeat1(choice(
-        $.sql_keyword,
+        $.non_from_sql_keyword,
         token(exclude_pattern),  // Tokens not starting with excluded letters
         $.string,
         $.number,
@@ -155,31 +190,88 @@ module.exports = grammar({
     },
 
     // Subquery in parentheses - fully recursive, can contain any SQL
-    // Higher precedence to prefer subquery interpretation over other_sql_statement
+    // Prioritizes WITH/SELECT statements, falls back to token-by-token parsing
     subquery: $ => prec(1, seq(
       '(',
-      repeat1(choice(
+      choice(
+        $.with_statement,
         $.select_statement,
-        $.sql_keyword,
-        $.string,
-        $.number,
-        $.identifier,
-        $.subquery,  // Nested subqueries
-        ',', '*', '.', '=', '<', '>', '!',
-        token(/[^\s;(),'\"]+/)  // Any other SQL tokens
-      )),
+        $.subquery_body
+      ),
       ')'
     )),
 
-    // Common SQL keywords (to help parser recognize structure)
+    // Scalar subquery for use inside expressions (e.g. function arguments)
+    // Matches (SELECT ...) or (WITH ... SELECT ...),
+    scalar_subquery: $ => prec(2, seq(
+      '(',
+      choice(
+        $.with_statement,
+        $.select_statement,
+      ),
+      ')'
+    )),
+
+    // Token-by-token fallback for any other subquery content
+    subquery_body: $ => repeat1(choice(
+      $.window_function,
+      $.cast_expression,
+      $.function_call,
+      $.sql_keyword,
+      $.string,
+      $.number,
+      $.identifier,
+      $.subquery,
+      ',', '*', '.', '=', '<', '>', '!', '::',
+      token(/[^\s;(),'\"]+/)
+    )),
+
+    // CAST/TRY_CAST expression: CAST(expr AS type) or TRY_CAST(expr AS type)
+    // Higher precedence than function_call to win over treating CAST as a regular function
+    cast_expression: $ => prec(3, seq(
+      choice(caseInsensitive('CAST'), caseInsensitive('TRY_CAST')),
+      '(',
+      $.position_arg,
+      caseInsensitive('AS'),
+      $.type_name,
+      ')'
+    )),
+
+    // Type name for CAST expressions: DATE, VARCHAR, DECIMAL(10,2), etc.
+    type_name: $ => seq(
+      $.identifier,
+      optional(seq('(', $.number, optional(seq(',', $.number)), ')'))
+    ),
+
+    // Function call with parentheses (can be empty like ROW_NUMBER())
+    // Used in window functions and general SQL
+    function_call: $ => prec(2, seq(
+      $.identifier,
+      '(',
+      optional($.function_args),
+      ')'
+    )),
+
+    // Common SQL keywords (to help parser recognize structure).
+    // Split into FROM + non_from_sql_keyword so other_sql_statement can use
+    // just the non-FROM variant for its first token (preventing it from
+    // eating `FROM t VISUALISE ...` which should parse as from_statement).
     sql_keyword: $ => choice(
       caseInsensitive('FROM'),
+      $.non_from_sql_keyword
+    ),
+
+    non_from_sql_keyword: $ => choice(
       caseInsensitive('WHERE'),
       caseInsensitive('JOIN'),
       caseInsensitive('LEFT'),
       caseInsensitive('RIGHT'),
       caseInsensitive('INNER'),
       caseInsensitive('OUTER'),
+      caseInsensitive('LATERAL'),
+      caseInsensitive('CROSS'),
+      caseInsensitive('NATURAL'),
+      caseInsensitive('FULL'),
       caseInsensitive('ON'),
       caseInsensitive('AND'),
       caseInsensitive('OR'),
@@ -207,75 +299,428 @@ module.exports = grammar({
       caseInsensitive('VIEW'),
       caseInsensitive('INDEX'),
       caseInsensitive('DATABASE'),
-      caseInsensitive('SCHEMA')
+      caseInsensitive('SCHEMA'),
+      caseInsensitive('OVER'),
+      caseInsensitive('ROWS'),
+      caseInsensitive('RANGE'),
+      caseInsensitive('UNBOUNDED'),
+      caseInsensitive('PRECEDING'),
+      caseInsensitive('FOLLOWING'),
+      caseInsensitive('CURRENT'),
+      caseInsensitive('ROW'),
+      caseInsensitive('NULLS'),
+      caseInsensitive('FIRST'),
+      caseInsensitive('LAST'),
+      caseInsensitive('QUALIFY'),
+      caseInsensitive('UNION'),
+      caseInsensitive('INTERSECT'),
+      caseInsensitive('EXCEPT')
     ),
 
-    // VISUALISE/VISUALIZE [FROM source] AS <type> with clauses
+    // Window function: func() OVER (PARTITION BY ... ORDER BY ... frame)
+    // Higher precedence to match before generic function_call
+    window_function: $ => prec(4, seq(
+      field('function', $.identifier),
+      '(',
+      optional($.function_args),
+      ')',
+      caseInsensitive('OVER'),
+      $.window_specification
+    )),
+
+    function_args: $ => seq(
+      $.function_arg,
+      repeat(seq(',', $.function_arg))
+    ),
+
+    // Function argument: position or named
+    function_arg: $ => choice(
+      $.named_arg,
+      $.position_arg
+    ),
+
+    named_arg: $ => seq(
+      field('name', $.identifier),
+      choice(':=', '=>'),
+      field('value', $.position_arg)
+    ),
+
+    // Position argument: supports complex expressions including:
+    // - Simple values: identifier, number, string, *
+    // - Qualified names: table.column
+    // - Nested function calls: ROUND(AVG(x), 2)
+    // - Arithmetic expressions: quantity * price
+    // - Type casts: value::type
+    position_arg: $ => prec.left(choice(
+      // Simple values
+      $.qualified_name,  // Handles both simple identifiers and table.column
+      $.number,
+      $.string,
+      '*',
+      // CAST/TRY_CAST expression
+      $.cast_expression,
+      // Nested function call
+      $.function_call,
+      // Scalar subquery: (SELECT ...) or (WITH ... SELECT ...)
+      $.scalar_subquery,
+      // Arithmetic/comparison expression (binary operators)
+      seq($.position_arg, choice('+', '-', '*', '/', '%', '||', '::', '<', '>', '<=', '>=', '=', '!=', '<>'), $.position_arg),
+      // Parenthesized expression
+      seq('(', $.position_arg, ')')
+    )),
+
+    // Namespaced identifier: matches "namespace:name" pattern
+    // Examples: ggsql:penguins, ggsql:airquality
+    namespaced_identifier: $ => {
+      const pattern = /[a-zA-Z_][a-zA-Z0-9_]*:[a-zA-Z_][a-zA-Z0-9_]*/;
+      return token(choice(
+        pattern,
+        seq('`', pattern, '`'),
+        seq('"', pattern, '"')
+      ));
+    },
+
+    window_specification: $ => seq(
+      '(',
+      optional($.window_partition_clause),
+      optional($.window_order_clause),
+      optional($.frame_clause),
+      ')'
+    ),
+
+    window_partition_clause: $ => seq(
+      caseInsensitive('PARTITION'),
+      caseInsensitive('BY'),
+      $.identifier,
+      repeat(seq(',', $.identifier))
+    ),
+
+    window_order_clause: $ => seq(
+      caseInsensitive('ORDER'),
+      caseInsensitive('BY'),
+      $.order_item,
+      repeat(seq(',', $.order_item))
+    ),
+
+    order_item: $ => seq(
+      $.identifier,
+      optional(choice(caseInsensitive('ASC'), caseInsensitive('DESC'))),
+      optional(seq(caseInsensitive('NULLS'), choice(caseInsensitive('FIRST'), caseInsensitive('LAST'))))
+    ),
+
+    frame_clause: $ => seq(
+      choice(caseInsensitive('ROWS'), caseInsensitive('RANGE')),
+      choice(
+        seq(caseInsensitive('BETWEEN'), $.frame_bound, caseInsensitive('AND'), $.frame_bound),
+        $.frame_bound
+      )
+    ),
+
+    frame_bound: $ => choice(
+      seq(caseInsensitive('UNBOUNDED'), choice(caseInsensitive('PRECEDING'), caseInsensitive('FOLLOWING'))),
+      seq(caseInsensitive('CURRENT'), caseInsensitive('ROW')),
+      seq($.number, choice(caseInsensitive('PRECEDING'), caseInsensitive('FOLLOWING')))
+    ),
+
+    // Dotted identifier (for catalog.schema.table)
+    qualified_name: $ => prec.right(seq(
+      $.identifier,
+      repeat(seq('.', $.identifier))
+    )),
+
+    table_ref: $ => prec.right(seq(
+      choice(
+        field('table', choice($.qualified_name, $.string, $.namespaced_identifier)),
+        $.subquery,
+      ),
+      optional(seq(
+        optional(caseInsensitive('AS')),
+        field('alias', $.identifier)
+      ))
+    )),
+
+    from_clause: $ => prec.right(1, seq(
+      caseInsensitive('FROM'),
+      $.table_ref,
+      repeat(seq(',', $.table_ref))
+    )),
+
+    // VISUALISE/VISUALIZE [global_mapping] [FROM source] with clauses
+    // Global mapping sets default aesthetics for all layers
     // FROM source can be an identifier (table/CTE) or string (file path)
-    visualise_statement: $ => seq(
-      choice(caseInsensitive('VISUALISE'), caseInsensitive('VISUALIZE')),
-      optional(seq(caseInsensitive('FROM'), choice($.identifier, $.string))),
-      caseInsensitive('AS'),
-      $.viz_type,
+    visualise_statement: $ => prec.dynamic(1, seq(
+      $.visualise_keyword,
+      optional($.global_mapping),
+      optional($.from_clause),
       repeat($.viz_clause)
+    )),
+
+    // VISUALISE keyword as explicit high-precedence token
+    visualise_keyword: $ => token(prec(10, choice(
+      caseInsensitive("VISUALISE"),
+      caseInsensitive("VISUALIZE")
+    ))),
+
+    // Shared mapping list: comma-separated mapping elements
+    // Used by both global (VISUALISE) and layer (MAPPING) mappings
+    mapping_list: $ => seq(
+      $.mapping_element,
+      repeat(seq(',', $.mapping_element))
     ),
 
-    // Visualization output types
-    viz_type: $ => choice(
-      caseInsensitive('PLOT'),
-      caseInsensitive('TABLE'),
-      caseInsensitive('MAP')
+    // Mapping element: wildcard, explicit, or implicit
+    mapping_element: $ => choice(
+      $.wildcard_mapping,   // *
+      $.explicit_mapping,   // date AS x
+      $.implicit_mapping    // x (becomes x AS x)
     ),
+
+    // Wildcard mapping: maps all columns to aesthetics with matching names
+    wildcard_mapping: $ => '*',
+
+    // Explicit mapping: value AS aesthetic (name)
+    explicit_mapping: $ => seq(
+      field('value', $.mapping_value),
+      caseInsensitive('AS'),
+      field('name', $.aesthetic_name)
+    ),
+
+    // Implicit mapping: just an identifier (column name = aesthetic name)
+    implicit_mapping: $ => $.identifier,
+
+    // Global mapping after VISUALISE - uses shared mapping_list
+    global_mapping: $ => $.mapping_list,
 
     // All the visualization clauses (same as current grammar)
     viz_clause: $ => choice(
-      $.with_clause,
+      $.draw_clause,
+      $.place_clause,
       $.scale_clause,
       $.facet_clause,
-      $.coord_clause,
+      $.project_clause,
       $.label_clause,
-      $.guide_clause,
-      $.theme_clause,
     ),
 
-    // WITH clause
-    with_clause: $ => seq(
-      caseInsensitive('WITH'),
+    // DRAW clause - syntax: DRAW geom [MAPPING ...] [REMAPPING ...] [SETTING ...] [FILTER ...] [PARTITION BY ...] [ORDER BY ...]
+    draw_clause: $ => seq(
+      caseInsensitive('DRAW'),
       $.geom_type,
-      caseInsensitive('USING'),
-      $.aesthetic_mapping,
-      repeat(seq(',', $.aesthetic_mapping)),
-      optional(seq(caseInsensitive('AS'), $.identifier))
+      optional($.mapping_clause),
+      optional($.remapping_clause),
+      optional($.setting_clause),
+      optional($.filter_clause),
+      optional($.partition_clause),
+      optional($.order_clause)
+    ),
+
+    // PLACE clause - syntax: PLACE geom [SETTING ...]
+    // For annotation layers with literal values only (no data mappings)
+    place_clause: $ => seq(
+      caseInsensitive('PLACE'),
+      $.geom_type,
+      optional($.setting_clause)
+    ),
+
+    // REMAPPING clause: maps stat-computed columns to aesthetics
+    // Syntax: REMAPPING count AS y, sum AS size
+    // Reuses mapping_list for parsing - stat names are treated as column references
+    remapping_clause: $ => seq(
+      caseInsensitive('REMAPPING'),
+      $.mapping_list
     ),
 
     geom_type: $ => choice(
-      'point', 'line', 'path', 'bar', 'col', 'area', 'tile', 'polygon', 'ribbon',
+      'point', 'line', 'path', 'bar', 'area', 'tile', 'polygon', 'ribbon',
       'histogram', 'density', 'smooth', 'boxplot', 'violin',
-      'text', 'label', 'segment', 'arrow', 'hline', 'vline', 'abline', 'errorbar'
+      'text', 'label', 'segment', 'arrow', 'rule', 'errorbar'
     ),
 
-    aesthetic_mapping: $ => seq(
-      field('aesthetic', $.aesthetic_name),
-      '=',
-      field('value', $.aesthetic_value)
+    // MAPPING clause for aesthetic mappings: MAPPING col AS x, "blue" AS color [FROM source]
+    // Supports: MAPPING x AS x, y AS y FROM cte
+    //           MAPPING FROM cte (inherits global mappings)
+    //           MAPPING * (wildcard)
+    //           MAPPING *, x AS color (wildcard with explicit)
+    //           MAPPING x, y (implicit mappings)
+    // Requires at least one of: aesthetic mappings or FROM clause
+    mapping_clause: $ => seq(
+      caseInsensitive('MAPPING'),
+      choice(
+        // Option 1: Just FROM (inherit global mappings)
+        seq(
+          caseInsensitive('FROM'),
+          field('layer_source', choice($.qualified_name, $.string, $.namespaced_identifier))
+        ),
+        // Option 2: Mapping list (uses shared structure), optionally followed by FROM
+        seq(
+          $.mapping_list,
+          optional(seq(
+            caseInsensitive('FROM'),
+            field('layer_source', choice($.qualified_name, $.string, $.namespaced_identifier))
+          ))
+        )
+      )
     ),
 
+    mapping_value: $ => choice(
+      $.column_reference,
+      $.literal_value
+    ),
+
+    // SETTING clause for parameters: SETTING opacity => 0.5, size => 3
+    setting_clause: $ => seq(
+      caseInsensitive('SETTING'),
+      $.parameter_assignment,
+      repeat(seq(',', $.parameter_assignment))
+    ),
+
+    parameter_assignment: $ => seq(
+      field('name', $.parameter_name),
+      '=>',
+      field('value', $.parameter_value)
+    ),
+
+    parameter_name: $ => $.identifier,
+
+    parameter_value: $ => choice(
+      $.string,
+      $.number,
+      $.boolean,
+      $.null_literal,
+      $.array
+    ),
+
+    // PARTITION BY clause for grouping: PARTITION BY category, region
+    partition_clause: $ => seq(
+      caseInsensitive('PARTITION'),
+      caseInsensitive('BY'),
+      $.partition_columns
+    ),
+
+    partition_columns: $ => seq(
+      $.identifier,
+      repeat(seq(',', $.identifier))
+    ),
+
+    // FILTER clause for layer filtering: FILTER <raw SQL WHERE expression>
+    // The filter_expression captures any valid SQL WHERE clause verbatim
+    // and passes it to the database backend
+    filter_clause: $ => seq(
+      caseInsensitive('FILTER'),
+      $.filter_expression
+    ),
+
+    // Raw SQL expression - captures everything that's valid in a WHERE clause
+    // Uses prec.right to greedily consume tokens until a clause keyword is hit
+    filter_expression: $ => prec.right(repeat1($.filter_token)),
+
+    // Individual tokens that can appear in a filter expression
+    // NOTE: This must NOT match PARTITION or ORDER as identifiers, since those
+    // keywords start subsequent clauses in draw_clause
+    filter_token: $ => choice(
+      // SQL keywords commonly used in WHERE clauses
+      caseInsensitive('AND'),
+      caseInsensitive('OR'),
+      caseInsensitive('NOT'),
+      caseInsensitive('IN'),
+      caseInsensitive('IS'),
+      caseInsensitive('NULL'),
+      caseInsensitive('LIKE'),
+      caseInsensitive('ILIKE'),
+      caseInsensitive('BETWEEN'),
+      caseInsensitive('EXISTS'),
+      caseInsensitive('ANY'),
+      caseInsensitive('ALL'),
+      caseInsensitive('CASE'),
+      caseInsensitive('WHEN'),
+      caseInsensitive('THEN'),
+      caseInsensitive('ELSE'),
+      caseInsensitive('END'),
+      caseInsensitive('CAST'),
+      caseInsensitive('AS'),
+      caseInsensitive('TRUE'),
+      caseInsensitive('FALSE'),
+      // Values and identifiers (lower precedence to allow keywords to take priority)
+      $.string,
+      $.number,
+      $.filter_identifier,
+      // Comparison operators (as explicit tokens)
+      token('='),
+      token('!='),
+      token('<>'),
+      token('<='),
+      token('>='),
+      token('<'),
+      token('>'),
+      // Regex operators (DuckDB/PostgreSQL)
+      token('~*'),   // case-insensitive regex match
+      token('!~*'),  // case-insensitive regex not match
+      token('!~'),   // regex not match
+      token('~'),    // regex match
+      // Arithmetic operators
+      token('+'),
+      token('-'),
+      token('*'),
+      token('/'),
+      token('%'),
+      token('||'),
+      // Type cast operator (PostgreSQL style)
+      token('::'),
+      // Parentheses for grouping
+      token('('),
+      token(')'),
+      token(','),
+      token('.')
+    ),
+
+    // ORDER BY clause for layer sorting: ORDER BY date ASC, value DESC
+    order_clause: $ => seq(
+      caseInsensitive('ORDER'),
+      caseInsensitive('BY'),
+      $.order_expression
+    ),
+
+    // Raw SQL ORDER BY expression - captures column names and sort directions
+    order_expression: $ => prec.right(repeat1($.order_token)),
+
+    // Individual tokens that can appear in an order expression
+    order_token: $ => choice(
+      $.identifier,
+      $.number,
+      caseInsensitive('ASC'),
+      caseInsensitive('DESC'),
+      caseInsensitive('NULLS'),
+      caseInsensitive('FIRST'),
+      caseInsensitive('LAST'),
+      ',',
+      '.',
+      '(',
+      ')'
+    ),
+
+    // Aesthetic name: either a known aesthetic or any identifier (for custom PROJECT aesthetics)
+    // Known aesthetics are listed first for syntax highlighting priority
     aesthetic_name: $ => choice(
-      // Position aesthetics
+      // Position aesthetics (cartesian)
       'x', 'y', 'xmin', 'xmax', 'ymin', 'ymax', 'xend', 'yend',
+      // Position aesthetics (polar)
+      'angle', 'radius', 'anglemin', 'anglemax', 'radiusmin', 'radiusmax',
+      'angleend', 'radiusend',
+      // Aggregation aesthetic (for bar charts)
+      'weight',
       // Color aesthetics
-      'color', 'colour', 'fill', 'alpha',
+      'color', 'colour', 'fill', 'stroke', 'opacity',
       // Size and shape
       'size', 'shape', 'linetype', 'linewidth', 'width', 'height',
       // Text aesthetics
-      'label', 'family', 'fontface', 'hjust', 'vjust',
-      // Grouping
-      'group'
-    ),
-
-    aesthetic_value: $ => choice(
-      $.column_reference,
-      $.literal_value
+      'label', 'typeface', 'fontweight', 'italic', 'fontsize', 'hjust', 'vjust', 'rotation',
+      // Specialty aesthetics,
+      'slope',
+      // Facet aesthetics
+      'panel', 'row', 'column',
+      // Computed variables
+      'offset', 'density', 'count', 'intensity',
+      // Allow any identifier for custom PROJECT aesthetics (e.g., PROJECT a, b TO polar)
+      $.identifier
     ),
 
     column_reference: $ => $.identifier,
@@ -283,58 +728,90 @@ module.exports = grammar({
     literal_value: $ => choice(
       $.string,
       $.number,
-      $.boolean
+      $.boolean,
+      $.null_literal
     ),
 
-    // SCALE clause
+    // SCALE clause - SCALE [TYPE] aesthetic [FROM ...] [TO ...] [VIA ...] [SETTING ...] [RENAMING ...]
+    // Examples:
+    //   SCALE DATE x
+    //   SCALE CONTINUOUS y FROM [0, 100]
+    //   SCALE DISCRETE color FROM ['A', 'B'] TO ['red', 'blue']
+    //   SCALE color TO viridis
+    //   SCALE x FROM [0, 100] SETTING breaks => '1 month'
+    //   SCALE DISCRETE x RENAMING 'A' => 'Alpha', 'B' => 'Beta'
     scale_clause: $ => seq(
       caseInsensitive('SCALE'),
+      optional($.scale_type_identifier),  // optional type before aesthetic
       $.aesthetic_name,
-      caseInsensitive('USING'),
-      optional(seq(
-        $.scale_property,
-        repeat(seq(',', $.scale_property))
-      ))
+      optional($.scale_from_clause),
+      optional($.scale_to_clause),
+      optional($.scale_via_clause),
+      optional($.setting_clause),  // reuse existing setting_clause from DRAW
+      optional($.scale_renaming_clause)  // custom label mappings
     ),
 
-    scale_property: $ => seq(
-      $.scale_property_name,
-      '=',
-      $.scale_property_value
+    // RENAMING clause for custom axis/legend labels
+    // Syntax: RENAMING 'A' => 'Alpha', 'B' => 'Beta', 'C' => NULL
+    scale_renaming_clause: $ => seq(
+      caseInsensitive('RENAMING'),
+      $.renaming_assignment,
+      repeat(seq(',', $.renaming_assignment))
     ),
 
-    scale_property_name: $ => choice(
-      'type', 'limits', 'breaks', 'labels', 'expand',
-      'direction', 'na_value', 'palette', 'domain', 'range'
+    renaming_assignment: $ => seq(
+      field('name', choice(
+        '*',                              // Wildcard for template
+        $.string,
+        $.number,
+        $.null_literal                    // NULL for renaming null values
+      )),
+      '=>',
+      field('value', choice($.string, $.null_literal))  // String label or NULL to suppress
     ),
 
-    scale_property_value: $ => choice(
-      $.string,
-      $.number,
-      $.boolean,
+    // Scale types - describe the nature of the data
+    scale_type_identifier: $ => choice(
+      caseInsensitive('CONTINUOUS'),  // continuous numeric data
+      caseInsensitive('DISCRETE'),    // categorical/discrete data
+      caseInsensitive('BINNED'),      // binned/bucketed data
+      caseInsensitive('ORDINAL'),     // ordered categorical data with interpolated output
+      caseInsensitive('IDENTITY')     // pass-through scale (data already in output format)
+    ),
+
+    // FROM clause - input range specification
+    scale_from_clause: $ => seq(
+      caseInsensitive('FROM'),
       $.array
     ),
 
-    // FACET clause
-    facet_clause: $ => choice(
-      // FACET row_vars BY col_vars
-      seq(
-        caseInsensitive('FACET'),
-        $.facet_vars,
-        alias(caseInsensitive('BY'), $.facet_by),
-        $.facet_vars,
-        optional(seq(caseInsensitive('USING'), caseInsensitive('scales'), '=', $.facet_scales))
-      ),
-      // FACET WRAP vars
-      seq(
-        caseInsensitive('FACET'),
-        alias(caseInsensitive('WRAP'), $.facet_wrap),
-        $.facet_vars,
-        optional(seq(caseInsensitive('USING'), caseInsensitive('scales'), '=', $.facet_scales))
+    // TO clause - output range (explicit array or named palette)
+    scale_to_clause: $ => seq(
+      caseInsensitive('TO'),
+      choice(
+        $.array,      // ['red', 'blue'] - explicit values
+        $.identifier  // viridis - named palette
       )
     ),
 
-    facet_wrap: $ => 'WRAP',
+    // VIA clause - transformation method
+    scale_via_clause: $ => seq(
+      caseInsensitive('VIA'),
+      $.identifier
+    ),
+
+    // FACET clause - FACET vars [BY vars] [SETTING ...]
+    // Single variable = wrap layout, BY clause = grid layout
+    facet_clause: $ => seq(
+      caseInsensitive('FACET'),
+      $.facet_vars,
+      optional(seq(
+        alias(caseInsensitive('BY'), $.facet_by),
+        $.facet_vars
+      )),
+      optional($.setting_clause)            // Reuse from DRAW/SCALE
+    ),
+
     facet_by: $ => 'BY',
 
     facet_vars: $ => seq(
@@ -342,41 +819,42 @@ module.exports = grammar({
       repeat(seq(',', $.identifier))
     ),
 
-    facet_scales: $ => choice(
-      'fixed', 'free', 'free_x', 'free_y'
+    // PROJECT clause - PROJECT [aesthetics] TO coord_type [SETTING prop => value, ...]
+    // Examples:
+    //   PROJECT TO cartesian (defaults to x, y)
+    //   PROJECT x, y TO cartesian (explicit aesthetics)
+    //   PROJECT a, b TO cartesian (custom aesthetic names)
+    //   PROJECT TO polar (defaults to angle, radius)
+    //   PROJECT angle, radius TO polar (explicit aesthetics)
+    //   PROJECT TO cartesian SETTING clip => true
+    project_clause: $ => seq(
+      caseInsensitive('PROJECT'),
+      optional($.project_aesthetics),
+      caseInsensitive('TO'),
+      $.project_type,
+      optional(seq(caseInsensitive('SETTING'), $.project_properties))
     ),
 
-    // COORD clause - new syntax: COORD [type] [USING properties]
-    coord_clause: $ => seq(
-      caseInsensitive('COORD'),
-      choice(
-        // Type with optional USING: COORD polar USING theta = y
-        seq($.coord_type, optional(seq(caseInsensitive('USING'), $.coord_properties))),
-        // Just USING: COORD USING xlim = [0, 100] (defaults to cartesian)
-        seq(caseInsensitive('USING'), $.coord_properties)
-      )
+    // Optional list of position aesthetic names for PROJECT clause
+    project_aesthetics: $ => seq(
+      $.identifier,
+      repeat(seq(',', $.identifier))
     ),
 
-    coord_type: $ => choice(
-      'cartesian', 'polar', 'flip', 'fixed', 'trans', 'map', 'quickmap'
+    project_type: $ => $.identifier,
+
+    project_properties: $ => seq(
+      $.project_property,
+      repeat(seq(',', $.project_property))
     ),
 
-    coord_properties: $ => seq(
-      $.coord_property,
-      repeat(seq(',', $.coord_property))
+    project_property: $ => seq(
+      field('name', $.project_property_name),
+      '=>',
+      field('value', choice($.string, $.number, $.boolean, $.array, $.identifier))
     ),
 
-    coord_property: $ => seq(
-      $.coord_property_name,
-      '=',
-      choice($.string, $.number, $.boolean, $.array, $.identifier)
-    ),
-
-    coord_property_name: $ => choice(
-      'xlim', 'ylim', 'ratio', 'theta', 'clip',
-      // Also allow aesthetic names as properties (for domain specification)
-      $.aesthetic_name
-    ),
+    project_property_name: $ => $.identifier,
 
     // LABEL clause (repeatable)
     label_clause: $ => seq(
@@ -388,81 +866,28 @@ module.exports = grammar({
     ),
 
     label_assignment: $ => seq(
-      $.label_type,
-      '=',
-      $.string
+      field('name', $.label_type),
+      '=>',
+      field('value', choice($.string, $.null_literal))
     ),
 
-    label_type: $ => choice(
-      'title', 'subtitle', 'x', 'y', 'caption', 'tag',
-      // Aesthetic names for legend titles
-      'color', 'colour', 'fill', 'size', 'shape', 'linetype'
-    ),
-
-    // GUIDE clause
-    guide_clause: $ => seq(
-      caseInsensitive('GUIDE'),
-      $.aesthetic_name,
-      caseInsensitive('USING'),
-      optional(seq(
-        $.guide_property,
-        repeat(seq(',', $.guide_property))
-      ))
-    ),
-
-    guide_property: $ => choice(
-      seq('type', '=', $.guide_type),
-      seq($.guide_property_name, '=', choice($.string, $.number, $.boolean))
-    ),
-
-    guide_type: $ => choice(
-      'legend', 'colorbar', 'axis', 'none'
-    ),
-
-    guide_property_name: $ => choice(
-      'position', 'direction', 'nrow', 'ncol', 'title',
-      'title_position', 'label_position', 'text_angle', 'text_size',
-      'reverse', 'order'
-    ),
-
-    // THEME clause
-    theme_clause: $ => choice(
-      // Just theme name
-      seq(caseInsensitive('THEME'), $.theme_name),
-      // Theme name with properties
-      seq(
-        caseInsensitive('THEME'), $.theme_name, caseInsensitive('USING'),
-        $.theme_property,
-        repeat(seq(',', $.theme_property))
-      ),
-      // Just properties (custom theme)
-      seq(
-        caseInsensitive('THEME'), caseInsensitive('USING'),
-        $.theme_property,
-        repeat(seq(',', $.theme_property))
-      )
-    ),
-
-    theme_name: $ => choice(
-      'minimal', 'classic', 'gray', 'grey', 'bw', 'dark', 'light', 'void'
-    ),
-
-    theme_property: $ => seq(
-      $.theme_property_name,
-      '=',
-      choice($.string, $.number, $.boolean)
-    ),
-
-    theme_property_name: $ => choice(
-      'background', 'panel_background', 'panel_grid', 'panel_grid_major',
-      'panel_grid_minor', 'text_size', 'text_family', 'title_size',
-      'axis_text_size', 'axis_line', 'axis_line_width', 'panel_border',
-      'plot_margin', 'panel_spacing', 'legend_background', 'legend_position',
-      'legend_direction'
-    ),
+    label_type: $ => $.identifier,
 
     // Basic tokens
-    identifier: $ => /[a-zA-Z_][a-zA-Z0-9_]*/,
+    bare_identifier: $ => token(/[a-zA-Z_][a-zA-Z0-9_]*/),
+    quoted_identifier: $ => token(choice(
+      seq('`', /[^`]+/, '`'),
+      seq('"', /[^"]+/, '"')
+    )),
+
+    identifier: $ => choice(
+      $.bare_identifier,
+      $.quoted_identifier
+    ),
+
+    // Identifier for use in filter expressions - uses lower precedence so that
+    // keywords like PARTITION and ORDER can take priority and end the filter
+    filter_identifier: $ => token(prec(-1, /[a-zA-Z_][a-zA-Z0-9_]*/)),
 
     number: $ => token(seq(
       optional('-'),
@@ -473,27 +898,37 @@ module.exports = grammar({
       )
     )),
 
-    string: $ => choice(
-      seq("'", repeat(choice(/[^'\\]/, seq('\\', /.*/))), "'"),
-      seq('"', repeat(choice(/[^"\\]/, seq('\\', /.*/))), '"')
-    ),
+    string: $ => seq("'", repeat(choice(/[^'\\]/, /\\./)), "'"),
 
     boolean: $ => choice('true', 'false'),
 
-    array: $ => seq(
-      '[',
-      optional(seq(
-        $.array_element,
-        repeat(seq(',', $.array_element))
-      )),
-      ']'
+    array: $ => choice(
+      seq(
+        '[',
+        optional(seq(
+          $.array_element,
+          repeat(seq(',', $.array_element))
+        )),
+        ']'
+      ),
+      seq(
+        '(',
+        optional(seq(
+          $.array_element,
+          repeat(seq(',', $.array_element))
+        )),
+        ')'
+      )
     ),
 
     array_element: $ => choice(
       $.string,
       $.number,
-      $.boolean
+      $.boolean,
+      $.null_literal
     ),
+
+    null_literal: $ => caseInsensitive('NULL'),
 
     // Comments
     comment: $ => choice(
@@ -508,5 +943,5 @@ module.exports = grammar({
     $.comment,    // Comments
   ],
 
-  word: $ => $.identifier,
+  word: $ => $.bare_identifier,
 });

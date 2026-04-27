@@ -1,11 +1,14 @@
-//! ggSQL Jupyter Kernel
+//! ggsql Jupyter Kernel
 //!
-//! A Jupyter kernel for executing ggSQL queries with rich Vega-Lite visualizations.
+//! A Jupyter kernel for executing ggsql queries with rich Vega-Lite visualizations.
 
+mod connection;
+mod data_explorer;
 mod display;
 mod executor;
 mod kernel;
 mod message;
+mod util;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -16,11 +19,15 @@ use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "ggsql-jupyter")]
-#[command(about = "Jupyter kernel for ggSQL", long_about = None)]
+#[command(about = "Jupyter kernel for ggsql", long_about = None)]
 struct Args {
     /// Path to the Jupyter connection file
     #[arg(short = 'f', long = "connection-file")]
     connection_file: Option<String>,
+
+    /// Database connection URI (e.g. "duckdb://memory")
+    #[arg(long, default_value = "duckdb://memory")]
+    reader: String,
 
     /// Install the kernel spec
     #[arg(long)]
@@ -46,7 +53,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    tracing::info!("ggSQL Jupyter Kernel v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("ggsql Jupyter Kernel v{}", env!("CARGO_PKG_VERSION"));
 
     // Parse command-line arguments
     let args = Args::parse();
@@ -69,7 +76,7 @@ async fn main() -> Result<()> {
     tracing::info!("Creating kernel server");
 
     // Create and run kernel
-    let mut kernel = kernel::KernelServer::new(connection).await?;
+    let mut kernel = kernel::KernelServer::new(connection, &args.reader).await?;
 
     tracing::info!("Kernel ready, starting event loop");
 
@@ -82,7 +89,7 @@ async fn main() -> Result<()> {
 
 /// Install the kernel spec using `jupyter kernelspec install`
 fn install_kernel(user: bool, sys_prefix: bool) -> Result<()> {
-    println!("Installing ggSQL Jupyter kernel...");
+    println!("Installing ggsql Jupyter kernel...");
 
     // Create a temporary directory for the kernel spec
     let temp_dir = env::temp_dir().join("ggsql-kernel-install");
@@ -119,10 +126,12 @@ fn install_kernel(user: bool, sys_prefix: bool) -> Result<()> {
             "-f",
             "{connection_file}"
         ],
-        "display_name": "ggSQL",
+        "display_name": "ggsql",
         "language": "ggsql",
         "interrupt_mode": "signal",
-        "env": {},
+        "env": {
+            "RUST_LOG": "error"
+        },
         "metadata": {
             "debugger": false
         }
@@ -171,7 +180,7 @@ fn install_kernel(user: bool, sys_prefix: bool) -> Result<()> {
     fs::remove_dir_all(&temp_dir).context("Failed to remove temporary directory")?;
 
     if status.success() {
-        println!("\n✓ ggSQL kernel installed successfully!");
+        println!("\n✓ ggsql kernel installed successfully!");
         println!("\nTo verify installation, run:");
         println!("  jupyter kernelspec list");
         Ok(())

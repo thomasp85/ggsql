@@ -1,0 +1,747 @@
+/*-- scss:rules --*/
+
+// Override Quarto's default padding-top on narrow screens for content after hero
+@media (max-width: 991.98px) {
+  #quarto-content > .hero-banner + .content-block {
+    padding-top: 1rem;
+  }
+}
+
+.navbar {
+  .navbar-brand-logo {
+    width: 20px;
+  }
+  .nav-item.dropdown {
+    .dropdown-menu {
+      .dropdown-item {
+        code {
+          color: var(--brand-black);
+        }
+      }
+    }
+  }
+}
+
+code {
+  font-variant-ligatures: none
+}
+
+// Add spacing below rendered plots so text doesn't crowd them
+.cell-output-display {
+  margin-bottom: 1.5rem;
+}
+
+// Front page paleteal background with subtle grid
+body:has(.hero-banner) {
+  background-color: var(--brand-paleteal, #DEF1EB);
+  background-image:
+    linear-gradient(rgba(0, 95, 115, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 95, 115, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-attachment: fixed;
+}
+
+// Animated background line charts canvas
+#bg-lines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero-banner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding: 4rem 2rem;
+  background: transparent;
+
+  h1, .hero-body {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+
+    .hcode {
+      font-family: "Fira Code";
+      font-weight: 100;
+    }
+
+    .hviz-wrapper {
+      position: relative;
+      display: inline-block;
+      vertical-align: baseline;
+      margin: 0 0.1em;
+    }
+
+    .hviz-wrapper .hviz {
+      display: block;
+      height: 0.85em;
+      width: auto;
+      margin: 0;
+      position: relative;
+      top: 0.08em;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    // Accessible + selectable text overlay
+    .hviz-wrapper .sr-only {
+      position: absolute;
+      inset: 0;
+      color: transparent;
+      user-select: all;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hund {
+      font-family: "Antic Didone", serif;
+      font-weight: 400;
+      font-style: normal;
+    }
+  }
+
+  h1 {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--brand-darkteal, #005F73);
+    margin-bottom: 1.5rem;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    text-align: left;
+  }
+
+  // Blurred backdrop behind hero text to stay readable over animated lines
+  h1, .hero-body > p {
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -30px -40px;
+      background: var(--brand-paleteal, #DEF1EB);
+      filter: blur(20px);
+      z-index: -1;
+      border-radius: 50%;
+    }
+  }
+
+  .hero-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    align-items: center;
+  }
+
+  .hero-body > p {
+    font-size: 1.25rem;
+    color: var(--brand-black, #001219);
+    line-height: 1.7;
+    margin: 0;
+    text-align: center;
+  }
+
+  .hero-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    width: fit-content;
+
+    > p {
+      display: contents;
+    }
+
+    .btn {
+      text-align: center;
+      display: block;
+    }
+  }
+
+  @media (min-width: 768px) {
+    padding: 5rem 2rem;
+
+    h1 {
+      font-size: 3.5rem;
+    }
+
+    .hero-body {
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 3rem;
+    }
+
+    .hero-body > p {
+      font-size: 1.35rem;
+      text-align: left;
+      flex: 1;
+    }
+
+    .hero-buttons {
+      flex-shrink: 0;
+      align-items: stretch;
+    }
+  }
+}
+
+
+.content-block {
+  position: relative;
+  z-index: 1;
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 4rem 2rem 2rem;
+  background: transparent;
+  color: var(--brand-darkteal);
+  border-radius: 24px;
+
+  @media (max-width: 1232px) {
+    border-radius: 0;
+    margin-left: 0;
+    margin-right: 0;
+    max-width: 100%;
+  }
+
+  > * {
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  > h2 {
+    text-align: left;
+    font-size: 2rem;
+    color: var(--brand-darkteal);
+    margin-bottom: 3rem;
+    border-bottom-color: var(--brand-darkteal);
+  }
+
+  a {
+    color: var(--brand-darkteal);
+  }
+
+  &.dark-bg {
+    background: rgba(249, 249, 249, 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--brand-darkteal);
+    box-shadow: 0 8px 32px rgba(0, 95, 115, 0.1);
+    border: 1px solid rgba(249, 249, 249, 0.5);
+
+    > h2, > h3 {
+      color: var(--brand-darkteal);
+      border-bottom-color: var(--brand-darkteal);
+    }
+
+    a:not(.btn) {
+      color: var(--brand-darkteal);
+    }
+  }
+}
+
+.features {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+
+  // 2-column layout on large screens
+  @media (min-width: 1000px) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.feature {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto 1fr;
+  column-gap: 2rem;
+  row-gap: 0.75rem;
+  background: rgba(249, 249, 249, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 16px;
+  padding: 2rem;
+  box-shadow: 0 8px 32px rgba(0, 95, 115, 0.1);
+  border: 1px solid rgba(249, 249, 249, 0.5);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0, 95, 115, 0.15);
+  }
+
+  h3 {
+    grid-column: 1;
+    grid-row: 1;
+    color: var(--brand-darkteal, #005F73);
+    font-size: 1.5rem;
+    margin: 0;
+  }
+
+  > p {
+    grid-column: 1;
+    grid-row: 2;
+    color: var(--brand-black, #001219);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .code-copy-outer-scaffold {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    margin: 0;
+    padding-top: 2.25rem;
+
+    .sourceCode {
+      margin: 0;
+    }
+
+    pre {
+      font-size: 0.85rem;
+      margin: 0;
+      border-radius: 4px;
+    }
+  }
+
+  // Full width text when no code cell - use flexbox for natural flow
+  &:not(:has(.code-copy-outer-scaffold)) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+
+    h3 {
+      grid-column: unset;
+      grid-row: unset;
+    }
+
+    > p {
+      grid-column: unset;
+      grid-row: unset;
+    }
+  }
+
+  // Single-column internal layout on small screens
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+
+    h3 {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    > p {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .code-copy-outer-scaffold {
+      grid-column: 1;
+      grid-row: 3;
+      padding-top: 0;
+    }
+  }
+
+  // Single-column internal layout when features are in 2-column grid
+  @media (min-width: 1000px) {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+
+    h3 {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    > p {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .code-copy-outer-scaffold {
+      grid-column: 1;
+      grid-row: 3;
+      padding-top: 1rem;
+    }
+
+    &:nth-of-type(even) {
+      h3, > p, .code-copy-outer-scaffold {
+        grid-column: 1;
+      }
+    }
+  }
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+  justify-items: center;
+
+  @media (min-width: 600px) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.integrations {
+  text-align: center;
+
+  > p {
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+.tool-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: var(--brand-darkteal, #005F73);
+
+  > p {
+    margin: 0;
+  }
+
+  a {
+    text-decoration: none;
+    color: inherit;
+
+    &:hover {
+      text-decoration: none;
+    }
+  }
+}
+
+.tool-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+// Install section
+.install-section {
+  text-align: center;
+
+  .install-columns {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    align-items: center;
+    margin-top: 1.5rem;
+
+    @media (min-width: 700px) {
+      flex-direction: row;
+      justify-content: center;
+      align-items: stretch;
+      gap: 0;
+    }
+  }
+
+  .install-col {
+    flex: 1;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .install-col-left {
+    align-items: center;
+  }
+
+  .install-col-right {
+    text-align: left;
+
+    > p:first-child {
+      margin-bottom: 0.75rem;
+    }
+
+    pre {
+      margin: 0;
+      font-size: 0.85rem;
+      text-align: left;
+    }
+
+    .sourceCode {
+      margin: 0;
+    }
+  }
+
+  .install-divider {
+    display: none;
+
+    @media (min-width: 700px) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0 2rem;
+      position: relative;
+
+      &::before,
+      &::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        width: 1px;
+        background: rgba(0, 95, 115, 0.2);
+      }
+
+      &::before {
+        top: 0;
+        bottom: calc(50% + 1rem);
+      }
+
+      &::after {
+        top: calc(50% + 1rem);
+        bottom: 0;
+      }
+
+      > p {
+        margin: 0;
+      }
+
+      .divider-text {
+        font-size: 0.85rem;
+        color: var(--brand-darkteal);
+        opacity: 0.7;
+      }
+    }
+  }
+
+  #installer-recommended {
+    margin-bottom: 1rem;
+
+    .install-btn {
+      min-width: 200px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+
+      .bi {
+        font-size: 1.3em;
+      }
+    }
+  }
+
+  .other-platforms-link {
+    font-size: 0.9rem;
+    opacity: 0.8;
+  }
+}
+
+.cta-section {
+  text-align: center;
+  padding: 2rem 0;
+
+  h2, > p {
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -30px -40px;
+      background: var(--brand-paleteal, #DEF1EB);
+      filter: blur(20px);
+      z-index: -1;
+      border-radius: 50%;
+    }
+  }
+
+  h2 {
+    margin-bottom: 1rem;
+  }
+
+  > p {
+    font-size: 1.1rem;
+    color: var(--brand-darkteal, #005F73);
+    margin-bottom: 2rem;
+  }
+
+  .cta-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+}
+
+// Example carousel
+.examples-carousel {
+  #listing-example-carousel {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 1rem;
+    mask-image: linear-gradient(
+      to right,
+      transparent 0%,
+      black 2%,
+      black 90%,
+      transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent 0%,
+      black 2%,
+      black 90%,
+      transparent 100%
+    );
+
+    // Force grid to single row with fixed column sizes
+    .list.grid {
+      display: grid !important;
+      grid-template-columns: repeat(6, 320px) !important;
+      grid-template-rows: 1fr !important;
+      grid-auto-flow: column !important;
+      gap: 1.5rem !important;
+      width: max-content !important;
+      max-width: none !important;
+    }
+
+    // Remove Bootstrap column classes
+    .list.grid > [class*="g-col"] {
+      grid-column: auto !important;
+      max-width: none !important;
+      width: auto !important;
+    }
+
+    .quarto-grid-item {
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 210, 189, 0.3);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      scroll-snap-align: start;
+
+      &:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0, 95, 115, 0.15);
+      }
+
+      .card-img-top {
+        width: 100%;
+        height: auto;
+      }
+
+      .card-title {
+        font-size: 0.95rem;
+        padding: 0.5rem 0.75rem;
+        margin: 0;
+        text-align: center;
+
+        a {
+          text-decoration: none;
+          color: var(--brand-darkteal);
+        }
+      }
+
+      .card-body {
+        padding: 0;
+      }
+    }
+  }
+
+  .see-all-link {
+    display: inline-block;
+    margin-top: 1.5rem;
+    font-weight: 500;
+    color: var(--brand-darkteal);
+  }
+}
+
+// Hide category badges on gallery example pages
+body:has(.quarto-title) .quarto-categories {
+  display: none;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  border-radius: 50rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.2s ease;
+
+  &.btn-lg {
+    padding: 0.875rem 2rem;
+    font-size: 1.1rem;
+  }
+
+  &.btn-primary {
+    background: var(--brand-darkteal, #005F73);
+    color: white;
+    border: 2px solid var(--brand-darkteal, #005F73);
+
+    &:hover {
+      background: var(--brand-teal, #0A9396);
+      border-color: var(--brand-teal, #0A9396);
+      color: white;
+      text-decoration: none;
+      box-shadow: 0 0 20px rgba(0, 95, 115, 0.3);
+      transform: translateY(-2px);
+    }
+  }
+
+  &.btn-outline-light {
+    background: transparent;
+    color: var(--brand-darkteal, #005F73);
+    border: 2px solid var(--brand-darkteal, #005F73);
+
+    &:hover {
+      background: var(--brand-darkteal, #005F73);
+      color: white;
+      text-decoration: none;
+    }
+  }
+
+  &.btn-outline-primary {
+    background: transparent;
+    color: var(--brand-darkteal, #005F73);
+    border: 2px solid var(--brand-darkteal, #005F73);
+
+    &:hover {
+      background: var(--brand-darkteal, #005F73);
+      color: white;
+      text-decoration: none;
+    }
+  }
+
+  &.btn-outline-secondary {
+    background: transparent;
+    color: var(--brand-teal, #0A9396);
+    border: 2px solid var(--brand-teal, #0A9396);
+
+    &:hover {
+      background: var(--brand-teal, #0A9396);
+      color: white;
+      text-decoration: none;
+    }
+  }
+}
+
+// FAQ callouts with brand teal colors
+.callout.callout-style-default.callout-note {
+  border-color: var(--brand-paleteal, #DEF1EB);
+  border-left-color: var(--brand-teal, #0A9396);
+
+  .callout-icon {
+    // Transform icon to brand-teal (#0A9396)
+    filter: brightness(0) saturate(100%) invert(33%) sepia(92%) saturate(458%) hue-rotate(152deg) brightness(93%) contrast(89%);
+  }
+
+  .callout-header {
+    background-color: var(--brand-paleteal, #DEF1EB);
+  }
+}

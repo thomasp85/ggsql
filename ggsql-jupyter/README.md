@@ -1,14 +1,14 @@
-# ggSQL Jupyter Kernel
+# ggsql Jupyter Kernel
 
-A Jupyter kernel for executing ggSQL queries with rich inline Vega-Lite visualizations.
+A Jupyter kernel for executing ggsql queries with rich inline Vega-Lite visualizations.
 
 ## Overview
 
-The ggSQL Jupyter kernel enables you to run ggSQL queries directly in Jupyter notebooks, with automatic rendering of visualizations using Vega-Lite. It maintains a persistent DuckDB session across cells, allowing you to build up datasets and create visualizations interactively.
+The ggsql Jupyter kernel enables you to run ggsql queries directly in Jupyter notebooks, with automatic rendering of visualizations using Vega-Lite. It maintains a persistent DuckDB session across cells, allowing you to build up datasets and create visualizations interactively.
 
 ## Features
 
-- **Execute ggSQL queries** in Jupyter notebooks
+- **Execute ggsql queries** in Jupyter notebooks
 - **Rich visualizations** with Vega-Lite rendered inline
 - **Persistent DuckDB session** across cells
 - **Pure SQL support** with HTML table output
@@ -19,63 +19,64 @@ The ggSQL Jupyter kernel enables you to run ggSQL queries directly in Jupyter no
 ### Prerequisites
 
 - Jupyter Lab or Notebook installed
-- Python 3.8+ (for Jupyter)
 
-### Option 1: Install from crates.io (Recommended)
+### Option 1: Install from PyPI (Recommended)
 
-If you have Rust installed:
+The easiest way to install the ggsql kernel is from PyPI. This provides pre-built binaries for Linux, macOS, and Windows.
+
+Using pip:
+
+```bash
+pip install ggsql-jupyter
+ggsql-jupyter --install
+```
+
+Using [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv tool install ggsql-jupyter
+ggsql-jupyter --install
+```
+
+The `--install` flag registers the kernel with Jupyter. It automatically detects and respects your current environment (virtualenv, conda, uv, etc.).
+
+### Option 2: Install from crates.io
+
+Requires a [Rust toolchain](https://rustup.rs/):
 
 ```bash
 cargo install ggsql-jupyter
 ggsql-jupyter --install
 ```
 
-This will:
+### Option 3: Download Pre-built Binary
 
-1. Download and compile the kernel
-2. Install it into your current environment (respects virtualenvs, conda, uv)
+Pre-built binaries are available from [GitHub Releases](https://github.com/georgestagg/ggsql/releases):
 
-### Option 2: Download Pre-built Binary from GitHub Releases
+| Platform              | Binary                          |
+| --------------------- | ------------------------------- |
+| Linux (x86_64)        | `ggsql-jupyter-linux-x64`       |
+| Linux (ARM64)         | `ggsql-jupyter-linux-arm64`     |
+| macOS (Intel)         | `ggsql-jupyter-macos-x64`       |
+| macOS (Apple Silicon) | `ggsql-jupyter-macos-arm64`     |
+| Windows (x64)         | `ggsql-jupyter-windows-x64.exe` |
 
-For users without Rust:
+After downloading, make it executable and install:
 
-1. **Download the binary** for your platform from [GitHub Releases](https://github.com/georgestagg/ggsql/releases)
+```bash
+chmod +x ggsql-jupyter-*
+./ggsql-jupyter-linux-x64 --install
+```
 
-   - Linux: `ggsql-jupyter-linux-x64`
-   - macOS (Intel): `ggsql-jupyter-macos-x64`
-   - macOS (Apple Silicon): `ggsql-jupyter-macos-arm64`
-   - Windows: `ggsql-jupyter-windows-x64.exe`
+On Windows (PowerShell):
 
-2. **Rename and make executable** (Linux/macOS):
+```powershell
+.\ggsql-jupyter-windows-x64.exe --install
+```
 
-   ```bash
-   mv ggsql-jupyter-linux-x64 ggsql-jupyter
-   chmod +x ggsql-jupyter
-   ```
+### Option 4: Build from Source
 
-3. **Install the kernel**:
-
-   ```bash
-   ./ggsql-jupyter --install
-   ```
-
-   On Windows (PowerShell):
-
-   ```powershell
-   .\ggsql-jupyter-windows-x64.exe --install
-   ```
-
-The `--install` flag automatically:
-
-- Creates a temporary directory with the kernel spec
-- Copies the binary to the appropriate location
-- Runs `jupyter kernelspec install` with the correct flags
-- Respects your current environment (virtualenv, conda, etc.)
-- Cleans up temporary files
-
-### Option 3: Build from Source
-
-From the workspace root:
+Requires a [Rust toolchain](https://rustup.rs/). From the workspace root:
 
 ```bash
 cargo build --release --package ggsql-jupyter
@@ -106,10 +107,10 @@ jupyter lab
 jupyter notebook
 ```
 
-### Create a ggSQL Notebook
+### Create a ggsql Notebook
 
-1. In Jupyter, click "New" and select "ggSQL" from the dropdown
-2. Start writing ggSQL queries!
+1. In Jupyter, click "New" and select "ggsql" from the dropdown
+2. Start writing ggsql queries!
 
 ### Example Queries
 
@@ -121,8 +122,9 @@ UNION ALL
 SELECT 2, 4, 'A'
 UNION ALL
 SELECT 3, 3, 'B'
-VISUALISE AS PLOT
-WITH point USING x = x, y = y, color = category
+
+VISUALISE x, y, category AS color
+DRAW point
 ```
 
 #### Time Series
@@ -132,21 +134,26 @@ SELECT
     '2024-01-01'::DATE + INTERVAL (n) DAY as date,
     n * 10 as revenue
 FROM generate_series(0, 30) as t(n)
-VISUALISE AS PLOT
-WITH line USING x = date, y = revenue
-SCALE x USING type = 'date'
-LABEL title = 'Revenue Growth', x = 'Date', y = 'Revenue ($)'
+
+VISUALISE date AS x, revenue AS y
+DRAW line
+SCALE x
+  SETTING type => 'date'
+LABEL title => 'Revenue Growth', x => 'Date', y => 'Revenue ($)'
 ```
 
-#### Multi-Layer Plot
+#### Multi-Layer Plot with Global Mapping
 
 ```sql
 SELECT x, x*x as y, x*x*x as z
 FROM generate_series(1, 10) as t(x)
-VISUALISE AS PLOT
-WITH line USING x = x, y = y
-WITH line USING x = x, y = z
-LABEL title = 'Polynomial Functions'
+
+VISUALISE x AS x
+DRAW line
+  MAPPING y AS y
+DRAW line
+  MAPPING z AS y
+LABEL title => 'Polynomial Functions'
 ```
 
 #### Pure SQL (Data Tables)
@@ -164,9 +171,9 @@ Cell 1:
 ```sql
 CREATE TABLE products AS
 SELECT * FROM (VALUES
-    (1, 'Widget', 10.99),
-    (2, 'Gadget', 24.99),
-    (3, 'Doohickey', 5.99)
+  (1, 'Widget', 10.99),
+  (2, 'Gadget', 24.99),
+  (3, 'Doohickey', 5.99)
 ) AS t(id, name, price)
 ```
 
@@ -174,7 +181,7 @@ Cell 2:
 
 ```sql
 SELECT * FROM products
-VISUALISE AS PLOT
-WITH bar USING x = name, y = price
-LABEL title = 'Product Prices', y = 'Price ($)'
+VISUALISE name AS x, price AS y
+DRAW bar
+LABEL title => 'Product Prices', y => 'Price ($)'
 ```

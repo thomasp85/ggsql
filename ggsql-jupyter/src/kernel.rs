@@ -3,18 +3,21 @@
 //! This module implements the Jupyter messaging protocol over ZeroMQ sockets,
 //! handling kernel_info, execute, and shutdown requests.
 
-use crate::display::format_display_data;
-use crate::executor::QueryExecutor;
+use crate::connection;
+use crate::data_explorer::{DataExplorerState, RpcResponse};
+use crate::display::{format_display_data, RenderHints};
+use crate::executor::{self, ExecutionResult, QueryExecutor};
 use crate::message::{ConnectionInfo, JupyterMessage, MessageHeader};
 use anyhow::Result;
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::Sha256;
+use std::collections::HashMap;
 use zeromq::{PubSocket, RepSocket, RouterSocket, Socket, SocketRecv, SocketSend};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// The ggSQL Jupyter kernel server
+/// The ggsql Jupyter kernel server
 pub struct KernelServer {
     shell: RouterSocket,
     iopub: PubSocket,
@@ -28,11 +31,17 @@ pub struct KernelServer {
     session: String,
     execution_count: u32,
     key: Vec<u8>,
+    // Positron comm IDs
+    variables_comm_id: Option<String>,
+    ui_comm_id: Option<String>,
+    plot_comm_id: Option<String>,
+    connection_comm_id: Option<String>,
+    data_explorer_comms: HashMap<String, DataExplorerState>,
 }
 
 impl KernelServer {
     /// Create a new kernel server from connection info
-    pub async fn new(connection: ConnectionInfo) -> Result<Self> {
+    pub async fn new(connection: ConnectionInfo, reader_uri: &str) -> Result<Self> {
         tracing::info!("Initializing kernel server");
 
         // Initialize sockets
@@ -64,8 +73,8 @@ impl KernelServer {
         tracing::info!("Binding heartbeat socket to {}", hb_addr);
         heartbeat.bind(&hb_addr).await?;
 
-        // Create executor
-        let executor = QueryExecutor::new()?;
+        // Create executor with the specified reader
+        let executor = QueryExecutor::new_with_uri(reader_uri)?;
 
         // Generate session ID
         let session = uuid::Uuid::new_v4().to_string();
@@ -85,11 +94,19 @@ impl KernelServer {
             session,
             execution_count: 0,
             key,
+            variables_comm_id: None,
+            ui_comm_id: None,
+            plot_comm_id: None,
+            connection_comm_id: None,
+            data_explorer_comms: HashMap::new(),
         };
 
         // Send initial "starting" status on IOPub
         // This is required by Jupyter protocol - exactly once at process startup
         kernel.send_status_initial("starting").await?;
+
+        // Open initial connection comm so the Connections pane shows the database
+        kernel.open_connection_comm(reader_uri).await?;
 
         Ok(kernel)
     }
@@ -97,9 +114,6 @@ impl KernelServer {
     /// Run the kernel event loop
     pub async fn run(&mut self) -> Result<()> {
         tracing::info!("Starting kernel event loop");
-
-        // Set up signal handler for SIGINT (Ctrl+C)
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
 
         loop {
             tokio::select! {
@@ -122,7 +136,7 @@ impl KernelServer {
                         self.heartbeat.send(msg).await?;
                     }
                 }
-                _ = sigint.recv() => {
+                _ = tokio::signal::ctrl_c() => {
                     tracing::warn!("Received SIGINT, shutting down gracefully");
                     // Send a final idle status before exiting
                     // Note: We don't have a parent message here, so we'll send without one
@@ -146,11 +160,20 @@ impl KernelServer {
         let (identities, jupyter_msg) = self.parse_message(msg)?;
         let msg_type = &jupyter_msg.header.msg_type;
 
-        tracing::info!("Received shell message: {} (identities: {})", msg_type, identities.len());
+        tracing::info!(
+            "Received shell message: {} (identities: {})",
+            msg_type,
+            identities.len()
+        );
 
         match msg_type.as_str() {
             "kernel_info_request" => self.send_kernel_info(&jupyter_msg, &identities).await?,
             "execute_request" => self.execute(&jupyter_msg, &identities).await?,
+            "is_complete_request" => self.is_complete(&jupyter_msg, &identities).await?,
+            "comm_open" => self.handle_comm_open(&jupyter_msg, &identities).await?,
+            "comm_msg" => self.handle_comm_msg(&jupyter_msg, &identities).await?,
+            "comm_info_request" => self.handle_comm_info(&jupyter_msg, &identities).await?,
+            "comm_close" => self.handle_comm_close(&jupyter_msg, &identities).await?,
             _ => {
                 tracing::warn!("Unhandled message type: {}", msg_type);
             }
@@ -169,7 +192,8 @@ impl KernelServer {
         match msg_type.as_str() {
             "kernel_info_request" => {
                 // Handle kernel_info on control channel too
-                self.send_kernel_info_control(&jupyter_msg, &identities).await?;
+                self.send_kernel_info_control(&jupyter_msg, &identities)
+                    .await?;
                 Ok(false)
             }
             "shutdown_request" => {
@@ -199,8 +223,15 @@ impl KernelServer {
     }
 
     /// Send kernel_info_reply on shell channel
-    async fn send_kernel_info(&mut self, parent: &JupyterMessage, identities: &[Vec<u8>]) -> Result<()> {
-        tracing::info!("Sending kernel_info_reply (identities: {})", identities.len());
+    async fn send_kernel_info(
+        &mut self,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
+        tracing::info!(
+            "Sending kernel_info_reply (identities: {})",
+            identities.len()
+        );
 
         // Per Jupyter spec: send busy/idle for ALL requests
         self.send_status("busy", parent).await?;
@@ -214,7 +245,11 @@ impl KernelServer {
     }
 
     /// Send kernel_info_reply on control channel
-    async fn send_kernel_info_control(&mut self, parent: &JupyterMessage, identities: &[Vec<u8>]) -> Result<()> {
+    async fn send_kernel_info_control(
+        &mut self,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
         // Per Jupyter spec: send busy/idle for ALL requests
         self.send_status("busy", parent).await?;
 
@@ -238,21 +273,33 @@ impl KernelServer {
                 "version": env!("CARGO_PKG_VERSION"),
                 "mimetype": "text/x-ggsql",
                 "file_extension": ".ggsql",
+                // TODO: We will want our own highlighting syntax here, and for Quarto.
                 "pygments_lexer": "sql",
-                "codemirror_mode": "sql"
+                "codemirror_mode": "sql",
+                "positron": {
+                    "input_prompt": "ggsql> ",
+                    "continuation_prompt": "... "
+                }
             },
-            "banner": format!("ggSQL Jupyter Kernel v{}\nSQL with declarative visualization", env!("CARGO_PKG_VERSION")),
+            "banner": format!("ggsql Jupyter Kernel v{}", env!("CARGO_PKG_VERSION")),
             "help_links": []
         })
     }
 
-    /// Execute a ggSQL query
+    /// Execute a ggsql query
     async fn execute(&mut self, parent: &JupyterMessage, identities: &[Vec<u8>]) -> Result<()> {
         let content = &parent.content;
         let code = content["code"].as_str().unwrap_or("");
         let silent = content["silent"].as_bool().unwrap_or(false);
+        let hints = RenderHints::from_request(&parent.header, content);
 
-        tracing::info!("Executing code ({} chars, silent={})", code.len(), silent);
+        tracing::info!(
+            "Executing code ({} chars, silent={}, notebook={}, width_px={:?})",
+            code.len(),
+            silent,
+            hints.is_notebook,
+            hints.output_width_px
+        );
 
         // Increment execution counter
         if !silent {
@@ -280,20 +327,33 @@ impl KernelServer {
 
         match result {
             Ok(exec_result) => {
+                // If the connection changed, open a new connection comm
+                let is_connection_changed =
+                    matches!(&exec_result, ExecutionResult::ConnectionChanged { .. });
+                if let ExecutionResult::ConnectionChanged { ref uri, .. } = &exec_result {
+                    self.open_connection_comm(uri).await?;
+                }
+
                 // Send execute_result (not display_data)
                 // Per Jupyter spec: execute_result includes execution_count
-                if !silent {
-                    let display_data = format_display_data(exec_result);
-                    self.send_iopub(
-                        "execute_result",
-                        json!({
+                // Only send if there's something to display (DDL returns None)
+                if !silent && !is_connection_changed {
+                    if let Some(display_data) = format_display_data(exec_result, &hints) {
+                        // Build message content, including output_location if present
+                        let mut content = json!({
                             "execution_count": self.execution_count,
                             "data": display_data["data"],
                             "metadata": display_data["metadata"]
-                        }),
-                        parent
-                    )
-                    .await?;
+                        });
+
+                        // Add output_location for Positron routing (e.g., to Plots pane)
+                        if let Some(location) = display_data.get("output_location") {
+                            content["output_location"] = location.clone();
+                            tracing::info!("Setting output_location: {}", location);
+                        }
+
+                        self.send_iopub("execute_result", content, parent).await?;
+                    }
                 }
 
                 // Send execute_reply
@@ -345,6 +405,618 @@ impl KernelServer {
 
         // Send status: idle
         self.send_status("idle", parent).await?;
+
+        Ok(())
+    }
+
+    /// Handle is_complete_request - check if code is a complete statement
+    async fn is_complete(&mut self, parent: &JupyterMessage, identities: &[Vec<u8>]) -> Result<()> {
+        let content = &parent.content;
+        let code = content["code"].as_str().unwrap_or("");
+
+        tracing::debug!("Checking if code is complete ({} chars)", code.len());
+
+        // Send status: busy
+        self.send_status("busy", parent).await?;
+
+        // Determine if code is complete
+        let status = if code.trim().is_empty() {
+            "incomplete" // Empty code needs more input
+        } else if is_code_complete(code) {
+            "complete"
+        } else {
+            "incomplete"
+        };
+
+        tracing::debug!("Code completeness: {}", status);
+
+        // Send is_complete_reply
+        self.send_shell_reply(
+            "is_complete_reply",
+            json!({
+                "status": status,
+                "indent": ""
+            }),
+            parent,
+            identities,
+        )
+        .await?;
+
+        // Send status: idle
+        self.send_status("idle", parent).await?;
+        Ok(())
+    }
+
+    /// Handle comm_open - a client wants to open a comm channel
+    async fn handle_comm_open(
+        &mut self,
+        parent: &JupyterMessage,
+        _identities: &[Vec<u8>],
+    ) -> Result<()> {
+        let target_name = parent.content["target_name"].as_str().unwrap_or("");
+        let comm_id = parent.content["comm_id"].as_str().unwrap_or("");
+        let data = &parent.content["data"];
+
+        tracing::info!(
+            "COMM_OPEN: target_name={}, comm_id={}, data={}",
+            target_name,
+            comm_id,
+            serde_json::to_string(data).unwrap_or_default()
+        );
+
+        self.send_status("busy", parent).await?;
+
+        match target_name {
+            "positron.variables" => {
+                tracing::info!("Registering positron.variables comm: {}", comm_id);
+                self.variables_comm_id = Some(comm_id.to_string());
+
+                // Send initial refresh event with empty variables
+                self.send_iopub(
+                    "comm_msg",
+                    json!({
+                        "comm_id": comm_id,
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "method": "refresh",
+                            "params": {
+                                "variables": [],
+                                "length": 0,
+                                "version": 0
+                            }
+                        }
+                    }),
+                    parent,
+                )
+                .await?;
+                tracing::info!("Sent initial variables refresh event");
+            }
+            "positron.ui" => {
+                tracing::info!("Registering positron.ui comm: {}", comm_id);
+                self.ui_comm_id = Some(comm_id.to_string());
+            }
+            _ => {
+                tracing::warn!("Unknown comm target: {}", target_name);
+            }
+        }
+
+        self.send_status("idle", parent).await?;
+        Ok(())
+    }
+
+    /// Handle comm_msg - a message on an existing comm channel
+    async fn handle_comm_msg(
+        &mut self,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
+        let comm_id = parent.content["comm_id"].as_str().unwrap_or("");
+        let data = &parent.content["data"];
+
+        tracing::info!(
+            "COMM_MSG: comm_id={}, data={}",
+            comm_id,
+            serde_json::to_string(data).unwrap_or_default()
+        );
+
+        self.send_status("busy", parent).await?;
+
+        // Check if it's a JSON-RPC request
+        #[allow(clippy::if_same_then_else)]
+        if let Some(method) = data["method"].as_str() {
+            let rpc_id = &data["id"];
+
+            tracing::info!("JSON-RPC request: method={}, id={}", method, rpc_id);
+
+            // Handle positron.variables requests
+            if Some(comm_id.to_string()) == self.variables_comm_id {
+                match method {
+                    "list" => {
+                        tracing::info!("Handling variables.list request");
+                        self.send_shell_reply(
+                            "comm_msg",
+                            json!({
+                                "comm_id": comm_id,
+                                "data": {
+                                    "jsonrpc": "2.0",
+                                    "id": rpc_id,
+                                    "result": {
+                                        "variables": [],
+                                        "length": 0,
+                                        "version": 0
+                                    }
+                                }
+                            }),
+                            parent,
+                            identities,
+                        )
+                        .await?;
+                    }
+                    "clear" => {
+                        tracing::info!("Handling variables.clear request (stub)");
+                        self.send_shell_reply(
+                            "comm_msg",
+                            json!({
+                                "comm_id": comm_id,
+                                "data": {
+                                    "jsonrpc": "2.0",
+                                    "id": rpc_id,
+                                    "result": {}
+                                }
+                            }),
+                            parent,
+                            identities,
+                        )
+                        .await?;
+                    }
+                    "delete" => {
+                        tracing::info!("Handling variables.delete request (stub)");
+                        self.send_shell_reply(
+                            "comm_msg",
+                            json!({
+                                "comm_id": comm_id,
+                                "data": {
+                                    "jsonrpc": "2.0",
+                                    "id": rpc_id,
+                                    "result": []
+                                }
+                            }),
+                            parent,
+                            identities,
+                        )
+                        .await?;
+                    }
+                    "inspect" => {
+                        tracing::info!("Handling variables.inspect request (stub)");
+                        self.send_shell_reply(
+                            "comm_msg",
+                            json!({
+                                "comm_id": comm_id,
+                                "data": {
+                                    "jsonrpc": "2.0",
+                                    "id": rpc_id,
+                                    "result": {
+                                        "children": [],
+                                        "length": 0
+                                    }
+                                }
+                            }),
+                            parent,
+                            identities,
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        tracing::warn!("Unhandled variables method: {}", method);
+                    }
+                }
+            }
+            // Handle positron.ui requests
+            else if Some(comm_id.to_string()) == self.ui_comm_id {
+                self.send_shell_reply(
+                    "comm_msg",
+                    json!({
+                        "comm_id": comm_id,
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "id": rpc_id,
+                            "result": null
+                        }
+                    }),
+                    parent,
+                    identities,
+                )
+                .await?;
+            }
+            // Handle positron.plot requests
+            else if Some(comm_id.to_string()) == self.plot_comm_id {
+                self.send_shell_reply(
+                    "comm_msg",
+                    json!({
+                        "comm_id": comm_id,
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "id": rpc_id,
+                            "result": null
+                        }
+                    }),
+                    parent,
+                    identities,
+                )
+                .await?;
+            }
+            // Handle positron.connection requests
+            else if Some(comm_id.to_string()) == self.connection_comm_id {
+                self.handle_connection_rpc(method, rpc_id, comm_id, parent, identities)
+                    .await?;
+            }
+            // Handle positron.dataExplorer requests
+            else if self.data_explorer_comms.contains_key(comm_id) {
+                self.handle_data_explorer_rpc(method, rpc_id, comm_id, parent, identities)
+                    .await?;
+            }
+            // Unknown comm — still respond to avoid RPC timeouts
+            else {
+                tracing::warn!(
+                    "JSON-RPC request for unknown comm_id: {}, method: {}",
+                    comm_id,
+                    method
+                );
+                self.send_shell_reply(
+                    "comm_msg",
+                    json!({
+                        "comm_id": comm_id,
+                        "data": {
+                            "jsonrpc": "2.0",
+                            "id": rpc_id,
+                            "result": null
+                        }
+                    }),
+                    parent,
+                    identities,
+                )
+                .await?;
+            }
+        }
+
+        self.send_status("idle", parent).await?;
+        Ok(())
+    }
+
+    /// Handle comm_info_request - list active comms
+    async fn handle_comm_info(
+        &mut self,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
+        let target_name = parent.content["target_name"].as_str();
+
+        tracing::info!("COMM_INFO_REQUEST: target_name={:?}", target_name);
+
+        self.send_status("busy", parent).await?;
+
+        let mut comms = json!({});
+
+        // Add active comms to response
+        if let Some(id) = &self.variables_comm_id {
+            if target_name.is_none() || target_name == Some("positron.variables") {
+                comms[id] = json!({"target_name": "positron.variables"});
+            }
+        }
+        if let Some(id) = &self.ui_comm_id {
+            if target_name.is_none() || target_name == Some("positron.ui") {
+                comms[id] = json!({"target_name": "positron.ui"});
+            }
+        }
+        if let Some(id) = &self.plot_comm_id {
+            if target_name.is_none() || target_name == Some("positron.plot") {
+                comms[id] = json!({"target_name": "positron.plot"});
+            }
+        }
+        if let Some(id) = &self.connection_comm_id {
+            if target_name.is_none() || target_name == Some("positron.connection") {
+                comms[id] = json!({"target_name": "positron.connection"});
+            }
+        }
+        for id in self.data_explorer_comms.keys() {
+            if target_name.is_none() || target_name == Some("positron.dataExplorer") {
+                comms[id] = json!({"target_name": "positron.dataExplorer"});
+            }
+        }
+
+        tracing::info!(
+            "Returning comms: {}",
+            serde_json::to_string(&comms).unwrap_or_default()
+        );
+
+        self.send_shell_reply(
+            "comm_info_reply",
+            json!({
+                "status": "ok",
+                "comms": comms
+            }),
+            parent,
+            identities,
+        )
+        .await?;
+
+        self.send_status("idle", parent).await?;
+        Ok(())
+    }
+
+    /// Handle comm_close - a client is closing a comm channel
+    async fn handle_comm_close(
+        &mut self,
+        parent: &JupyterMessage,
+        _identities: &[Vec<u8>],
+    ) -> Result<()> {
+        let comm_id = parent.content["comm_id"].as_str().unwrap_or("");
+
+        tracing::info!("COMM_CLOSE: comm_id={}", comm_id);
+
+        self.send_status("busy", parent).await?;
+
+        // Clear comm ID if it matches
+        if Some(comm_id.to_string()) == self.variables_comm_id {
+            tracing::info!("Closing positron.variables comm");
+            self.variables_comm_id = None;
+        } else if Some(comm_id.to_string()) == self.ui_comm_id {
+            tracing::info!("Closing positron.ui comm");
+            self.ui_comm_id = None;
+        } else if Some(comm_id.to_string()) == self.plot_comm_id {
+            tracing::info!("Closing positron.plot comm");
+            self.plot_comm_id = None;
+        } else if Some(comm_id.to_string()) == self.connection_comm_id {
+            tracing::info!("Closing positron.connection comm");
+            self.connection_comm_id = None;
+        } else if self.data_explorer_comms.remove(comm_id).is_some() {
+            tracing::info!("Closing data explorer comm: {}", comm_id);
+        } else {
+            tracing::warn!("Close for unknown comm_id: {}", comm_id);
+        }
+
+        self.send_status("idle", parent).await?;
+        Ok(())
+    }
+
+    /// Open (or replace) a `positron.connection` comm for the current reader.
+    ///
+    /// The kernel initiates this comm (backend-initiated). If an existing
+    /// connection comm is open, it is closed first.
+    async fn open_connection_comm(&mut self, uri: &str) -> Result<()> {
+        // Close existing connection comm if any
+        if let Some(old_id) = self.connection_comm_id.take() {
+            tracing::info!("Closing old connection comm: {}", old_id);
+            let close_msg = self.create_message("comm_close", json!({ "comm_id": old_id }), None);
+            let zmq_msg = self.serialize_message_with_topic(&close_msg, "comm_close")?;
+            self.iopub.send(zmq_msg).await?;
+        }
+
+        let comm_id = uuid::Uuid::new_v4().to_string();
+        let display_name = executor::display_name_for_uri(uri);
+        let type_name = executor::type_name_for_uri(uri);
+        let host = executor::host_for_uri(uri);
+        let meta_command = format!("-- @connect: {}", uri);
+
+        tracing::info!(
+            "Opening positron.connection comm: {} ({})",
+            comm_id,
+            display_name
+        );
+
+        let msg = self.create_message(
+            "comm_open",
+            json!({
+                "comm_id": comm_id,
+                "target_name": "positron.connection",
+                "data": {
+                    "name": display_name,
+                    "language_id": "ggsql",
+                    "host": host,
+                    "type": type_name,
+                    "code": meta_command
+                }
+            }),
+            None,
+        );
+        let zmq_msg = self.serialize_message_with_topic(&msg, "comm_open")?;
+        self.iopub.send(zmq_msg).await?;
+
+        self.connection_comm_id = Some(comm_id);
+        Ok(())
+    }
+
+    /// Handle JSON-RPC requests on the connection comm
+    async fn handle_connection_rpc(
+        &mut self,
+        method: &str,
+        rpc_id: &Value,
+        comm_id: &str,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
+        tracing::info!("Connection RPC: {}", method);
+
+        let params = &parent.content["data"]["params"];
+
+        let result = match method {
+            "list_objects" => {
+                let path: Vec<String> = params["path"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                v.get("name")
+                                    .and_then(|n| n.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match connection::list_objects(self.executor.reader(), &path) {
+                    Ok(objects) => json!(objects),
+                    Err(e) => {
+                        tracing::error!("list_objects failed: {}", e);
+                        json!([])
+                    }
+                }
+            }
+            "list_fields" => {
+                let path: Vec<String> = params["path"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                v.get("name")
+                                    .and_then(|n| n.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                match connection::list_fields(self.executor.reader(), &path) {
+                    Ok(fields) => json!(fields),
+                    Err(e) => {
+                        tracing::error!("list_fields failed: {}", e);
+                        json!([])
+                    }
+                }
+            }
+            "contains_data" => {
+                let path: Vec<Value> = params["path"].as_array().cloned().unwrap_or_default();
+                let has_data = connection::contains_data(&path);
+                json!(has_data)
+            }
+            "get_icon" => json!(""),
+            "preview_object" => {
+                let path: Vec<String> = params["path"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| {
+                                v.get("name")
+                                    .and_then(|n| n.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                match DataExplorerState::open(self.executor.reader(), &path) {
+                    Ok(state) => {
+                        let de_comm_id = uuid::Uuid::new_v4().to_string();
+                        let title = path.last().cloned().unwrap_or_default();
+
+                        // Send comm_open on iopub to open the data viewer
+                        let msg = self.create_message(
+                            "comm_open",
+                            json!({
+                                "comm_id": de_comm_id,
+                                "target_name": "positron.dataExplorer",
+                                "data": {
+                                    "title": title
+                                }
+                            }),
+                            Some(parent),
+                        );
+                        let zmq_msg = self.serialize_message_with_topic(&msg, "comm_open")?;
+                        self.iopub.send(zmq_msg).await?;
+
+                        tracing::info!("Opened data explorer comm: {} for {}", de_comm_id, title);
+                        self.data_explorer_comms.insert(de_comm_id, state);
+                    }
+                    Err(e) => {
+                        tracing::error!("preview_object failed: {}", e);
+                    }
+                }
+                json!(null)
+            }
+            "get_metadata" => {
+                let uri = self.executor.reader_uri();
+                json!({
+                    "name": executor::display_name_for_uri(uri),
+                    "language_id": "ggsql",
+                    "host": executor::host_for_uri(uri),
+                    "type": executor::type_name_for_uri(uri),
+                    "code": format!("-- @connect: {}", uri)
+                })
+            }
+            _ => {
+                tracing::warn!("Unknown connection method: {}", method);
+                json!(null)
+            }
+        };
+
+        self.send_shell_reply(
+            "comm_msg",
+            json!({
+                "comm_id": comm_id,
+                "data": {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "result": result
+                }
+            }),
+            parent,
+            identities,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Handle JSON-RPC requests on a data explorer comm
+    async fn handle_data_explorer_rpc(
+        &mut self,
+        method: &str,
+        rpc_id: &Value,
+        comm_id: &str,
+        parent: &JupyterMessage,
+        identities: &[Vec<u8>],
+    ) -> Result<()> {
+        tracing::info!("Data explorer RPC: {}", method);
+
+        let params = &parent.content["data"]["params"];
+
+        let RpcResponse { result, event } =
+            if let Some(state) = self.data_explorer_comms.get(comm_id) {
+                state.handle_rpc(method, params, self.executor.reader())
+            } else {
+                RpcResponse::reply(json!(null))
+            };
+
+        // Send the RPC reply
+        self.send_shell_reply(
+            "comm_msg",
+            json!({
+                "comm_id": comm_id,
+                "data": {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "result": result
+                }
+            }),
+            parent,
+            identities,
+        )
+        .await?;
+
+        // Send async event on iopub if present (e.g. return_column_profiles)
+        if let Some(evt) = event {
+            self.send_iopub(
+                "comm_msg",
+                json!({
+                    "comm_id": comm_id,
+                    "data": {
+                        "jsonrpc": "2.0",
+                        "method": evt.method,
+                        "params": evt.params
+                    }
+                }),
+                parent,
+            )
+            .await?;
+        }
 
         Ok(())
     }
@@ -406,21 +1078,13 @@ impl KernelServer {
 
     /// Send a status message
     async fn send_status(&mut self, state: &str, parent: &JupyterMessage) -> Result<()> {
-        self.send_iopub(
-            "status",
-            json!({"execution_state": state}),
-            parent,
-        )
-        .await
+        self.send_iopub("status", json!({"execution_state": state}), parent)
+            .await
     }
 
     /// Send an initial status message without a parent (for kernel startup)
     async fn send_status_initial(&mut self, state: &str) -> Result<()> {
-        let msg = self.create_message(
-            "status",
-            json!({"execution_state": state}),
-            None,
-        );
+        let msg = self.create_message("status", json!({"execution_state": state}), None);
         let zmq_msg = self.serialize_message_with_topic(&msg, "status")?;
         self.iopub.send(zmq_msg).await?;
         Ok(())
@@ -478,7 +1142,8 @@ impl KernelServer {
 
         // SECURITY: Verify HMAC signature if key is set
         if !self.key.is_empty() {
-            let expected_hmac = self.sign_message(header_json, parent_json, metadata_json, content_json);
+            let expected_hmac =
+                self.sign_message(header_json, parent_json, metadata_json, content_json);
 
             // Use constant-time comparison to prevent timing attacks
             if received_hmac != expected_hmac {
@@ -520,7 +1185,11 @@ impl KernelServer {
 
     /// Serialize a Jupyter message to ZeroMQ format with topic (for IOPub)
     /// According to Jupyter protocol: "there should be just one prefix component, which is the topic"
-    fn serialize_message_with_topic(&self, msg: &JupyterMessage, topic: &str) -> Result<zeromq::ZmqMessage> {
+    fn serialize_message_with_topic(
+        &self,
+        msg: &JupyterMessage,
+        topic: &str,
+    ) -> Result<zeromq::ZmqMessage> {
         let header = serde_json::to_string(&msg.header)?;
         let parent = serde_json::to_string(&msg.parent_header)?;
         let metadata = serde_json::to_string(&msg.metadata)?;
@@ -541,15 +1210,13 @@ impl KernelServer {
         Ok(zmq_msg)
     }
 
-
     /// Sign a message using HMAC-SHA256
     fn sign_message(&self, header: &str, parent: &str, metadata: &str, content: &str) -> String {
         if self.key.is_empty() {
             return String::new();
         }
 
-        let mut mac = HmacSha256::new_from_slice(&self.key)
-            .expect("HMAC can take key of any size");
+        let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC can take key of any size");
         mac.update(header.as_bytes());
         mac.update(parent.as_bytes());
         mac.update(metadata.as_bytes());
@@ -557,4 +1224,57 @@ impl KernelServer {
 
         hex::encode(mac.finalize().into_bytes())
     }
+}
+
+/// Check if ggsql code is complete (balanced brackets, not in a string)
+/// If the code contains VISUALISE, it must also contain at least one DRAW layer
+fn is_code_complete(code: &str) -> bool {
+    let trimmed = code.trim();
+
+    // Empty or whitespace-only is incomplete
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Check for balanced parentheses, brackets, and braces
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut brace_depth = 0i32;
+    let mut in_string = false;
+    let mut string_char = ' ';
+
+    for c in trimmed.chars() {
+        if in_string {
+            if c == string_char {
+                in_string = false;
+            }
+        } else {
+            match c {
+                '\'' | '"' => {
+                    in_string = true;
+                    string_char = c;
+                }
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                _ => {}
+            }
+        }
+    }
+
+    // Code is incomplete if brackets are unbalanced or we're in a string
+    if in_string || paren_depth != 0 || bracket_depth != 0 || brace_depth != 0 {
+        return false;
+    }
+
+    // If code contains VISUALISE/VISUALIZE, it must also contain DRAW
+    let upper = trimmed.to_uppercase();
+    if upper.contains("VISUALISE") || upper.contains("VISUALIZE") {
+        return upper.contains("DRAW");
+    }
+
+    true
 }

@@ -2,7 +2,7 @@
 //!
 //! Parses URI-style connection strings to determine database type and connection parameters.
 
-use crate::{Result, GgsqlError};
+use crate::{GgsqlError, Result};
 
 /// Parsed connection information
 #[derive(Debug, Clone, PartialEq)]
@@ -17,6 +17,9 @@ pub enum ConnectionInfo {
     /// SQLite file-based database
     #[allow(dead_code)]
     SQLite(String),
+    /// Generic ODBC connection (raw connection string after `odbc://` prefix)
+    #[allow(dead_code)]
+    ODBC(String),
 }
 
 /// Parse a connection string into connection information
@@ -24,21 +27,9 @@ pub enum ConnectionInfo {
 /// # Supported Formats
 ///
 /// - `duckdb://memory` - DuckDB in-memory database
-/// - `duckdb:///absolute/path/file.db` - DuckDB file (absolute path)
-/// - `duckdb://relative/file.db` - DuckDB file (relative path)
+/// - `duckdb://...` - DuckDB path
 /// - `postgres://...` - PostgreSQL connection string
 /// - `sqlite://...` - SQLite file path
-///
-/// # Examples
-///
-/// ```
-/// use ggsql::reader::connection::{parse_connection_string, ConnectionInfo};
-///
-/// let info = parse_connection_string("duckdb://memory").unwrap();
-/// assert_eq!(info, ConnectionInfo::DuckDBMemory);
-///
-/// let info = parse_connection_string("duckdb://data.db").unwrap();
-/// assert_eq!(info, ConnectionInfo::DuckDBFile("data.db".to_string()));
 /// ```
 pub fn parse_connection_string(uri: &str) -> Result<ConnectionInfo> {
     if uri == "duckdb://memory" {
@@ -46,14 +37,12 @@ pub fn parse_connection_string(uri: &str) -> Result<ConnectionInfo> {
     }
 
     if let Some(path) = uri.strip_prefix("duckdb://") {
-        // Remove leading slashes for file paths
-        let cleaned_path = path.trim_start_matches('/');
-        if cleaned_path.is_empty() {
+        if path.is_empty() {
             return Err(GgsqlError::ReaderError(
                 "DuckDB file path cannot be empty".to_string(),
             ));
         }
-        return Ok(ConnectionInfo::DuckDBFile(cleaned_path.to_string()));
+        return Ok(ConnectionInfo::DuckDBFile(path.to_string()));
     }
 
     if uri.starts_with("postgres://") || uri.starts_with("postgresql://") {
@@ -61,17 +50,25 @@ pub fn parse_connection_string(uri: &str) -> Result<ConnectionInfo> {
     }
 
     if let Some(path) = uri.strip_prefix("sqlite://") {
-        let cleaned_path = path.trim_start_matches('/');
-        if cleaned_path.is_empty() {
+        if path.is_empty() {
             return Err(GgsqlError::ReaderError(
                 "SQLite file path cannot be empty".to_string(),
             ));
         }
-        return Ok(ConnectionInfo::SQLite(cleaned_path.to_string()));
+        return Ok(ConnectionInfo::SQLite(path.to_string()));
+    }
+
+    if let Some(conn_str) = uri.strip_prefix("odbc://") {
+        if conn_str.is_empty() {
+            return Err(GgsqlError::ReaderError(
+                "ODBC connection string cannot be empty".to_string(),
+            ));
+        }
+        return Ok(ConnectionInfo::ODBC(conn_str.to_string()));
     }
 
     Err(GgsqlError::ReaderError(format!(
-        "Unsupported connection string format: {}. Supported: duckdb://, postgres://, sqlite://",
+        "Unsupported connection string format: {}. Supported: duckdb://, postgres://, sqlite://, odbc://",
         uri
     )))
 }
@@ -95,7 +92,7 @@ mod tests {
     #[test]
     fn test_duckdb_file_absolute() {
         let info = parse_connection_string("duckdb:///tmp/data.db").unwrap();
-        assert_eq!(info, ConnectionInfo::DuckDBFile("tmp/data.db".to_string()));
+        assert_eq!(info, ConnectionInfo::DuckDBFile("/tmp/data.db".to_string()));
     }
 
     #[test]
@@ -128,8 +125,34 @@ mod tests {
     }
 
     #[test]
+    fn test_sqlite_absolute() {
+        let info = parse_connection_string("sqlite:///tmp/data.db").unwrap();
+        assert_eq!(info, ConnectionInfo::SQLite("/tmp/data.db".to_string()));
+    }
+
+    #[test]
     fn test_empty_duckdb_path() {
         let result = parse_connection_string("duckdb://");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_odbc() {
+        let info = parse_connection_string(
+            "odbc://Driver=Snowflake;Server=myaccount.snowflakecomputing.com",
+        )
+        .unwrap();
+        assert_eq!(
+            info,
+            ConnectionInfo::ODBC(
+                "Driver=Snowflake;Server=myaccount.snowflakecomputing.com".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_odbc_empty() {
+        let result = parse_connection_string("odbc://");
         assert!(result.is_err());
     }
 

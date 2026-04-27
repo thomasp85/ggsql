@@ -1,0 +1,610 @@
+//! Boxplot geom implementation
+
+use std::collections::HashMap;
+
+use super::types::POSITION_VALUES;
+use super::{DefaultAesthetics, GeomTrait, GeomType};
+use crate::{
+    naming,
+    plot::{
+        geom::types::get_column_name, DefaultAestheticValue, DefaultParamValue, ParamConstraint,
+        ParamDefinition, ParameterValue, StatResult,
+    },
+    reader::SqlDialect,
+    DataFrame, GgsqlError, Mappings, Result,
+};
+
+/// Boxplot geom - box and whisker plots
+#[derive(Debug, Clone, Copy)]
+pub struct Boxplot;
+
+impl GeomTrait for Boxplot {
+    fn geom_type(&self) -> GeomType {
+        GeomType::Boxplot
+    }
+
+    fn aesthetics(&self) -> DefaultAesthetics {
+        DefaultAesthetics {
+            defaults: &[
+                ("pos1", DefaultAestheticValue::Required),
+                ("pos2", DefaultAestheticValue::Required),
+                ("stroke", DefaultAestheticValue::String("black")),
+                ("fill", DefaultAestheticValue::String("white")),
+                ("linewidth", DefaultAestheticValue::Number(1.0)),
+                ("opacity", DefaultAestheticValue::Number(0.8)),
+                ("linetype", DefaultAestheticValue::String("solid")),
+                ("size", DefaultAestheticValue::Number(3.0)),
+                ("shape", DefaultAestheticValue::String("circle")),
+                // Internal aesthetics produced by stat transform
+                ("type", DefaultAestheticValue::Delayed),
+                ("pos2end", DefaultAestheticValue::Delayed),
+            ],
+        }
+    }
+
+    fn stat_consumed_aesthetics(&self) -> &'static [&'static str] {
+        &["pos2"]
+    }
+
+    fn needs_stat_transform(&self, _aesthetics: &Mappings) -> bool {
+        true
+    }
+
+    fn default_params(&self) -> &'static [super::ParamDefinition] {
+        const PARAMS: &[ParamDefinition] = &[
+            ParamDefinition {
+                name: "outliers",
+                default: DefaultParamValue::Boolean(true),
+                constraint: ParamConstraint::boolean(),
+            },
+            ParamDefinition {
+                name: "coef",
+                default: DefaultParamValue::Number(1.5),
+                constraint: ParamConstraint::number_min(0.0),
+            },
+            ParamDefinition {
+                name: "width",
+                default: DefaultParamValue::Number(0.9),
+                constraint: ParamConstraint::number_range(0.0, 1.0),
+            },
+            ParamDefinition {
+                name: "position",
+                default: DefaultParamValue::String("dodge"),
+                constraint: ParamConstraint::string_option(POSITION_VALUES),
+            },
+        ];
+        PARAMS
+    }
+
+    fn default_remappings(&self) -> DefaultAesthetics {
+        DefaultAesthetics {
+            defaults: &[
+                ("pos2", DefaultAestheticValue::Column("value")),
+                ("pos2end", DefaultAestheticValue::Column("value2")),
+                ("type", DefaultAestheticValue::Column("type")),
+            ],
+        }
+    }
+
+    fn apply_stat_transform(
+        &self,
+        query: &str,
+        _schema: &crate::plot::Schema,
+        aesthetics: &Mappings,
+        group_by: &[String],
+        parameters: &HashMap<String, ParameterValue>,
+        _execute_query: &dyn Fn(&str) -> Result<DataFrame>,
+        dialect: &dyn SqlDialect,
+    ) -> Result<StatResult> {
+        stat_boxplot(query, aesthetics, group_by, parameters, dialect)
+    }
+}
+
+impl std::fmt::Display for Boxplot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "boxplot")
+    }
+}
+
+fn stat_boxplot(
+    query: &str,
+    aesthetics: &Mappings,
+    group_by: &[String],
+    parameters: &HashMap<String, ParameterValue>,
+    dialect: &dyn SqlDialect,
+) -> Result<StatResult> {
+    let y = get_column_name(aesthetics, "pos2").ok_or_else(|| {
+        GgsqlError::ValidationError("Boxplot requires 'y' aesthetic mapping".to_string())
+    })?;
+    let x = get_column_name(aesthetics, "pos1").ok_or_else(|| {
+        GgsqlError::ValidationError("Boxplot requires 'x' aesthetic mapping".to_string())
+    })?;
+
+    // Get coef parameter (validated by ParamConstraint::number_min)
+    let ParameterValue::Number(coef) = parameters.get("coef").unwrap() else {
+        unreachable!("coef validated by ParamConstraint::number_min")
+    };
+
+    // Get outliers parameter (validated by ParamConstraint::boolean)
+    let ParameterValue::Boolean(outliers) = parameters.get("outliers").unwrap() else {
+        unreachable!("outliers validated by ParamConstraint::boolean")
+    };
+
+    // Fix boxplots to be vertical, when we later have orientation this may change
+    let (value_col, group_col) = (y, x);
+
+    // The `groups` vector is never empty, it contains at least the opposite axis as column
+    // This absolves us from every having to guard against empty groups
+    let mut groups = group_by.to_vec();
+    if !groups.contains(&group_col) {
+        groups.push(group_col);
+    }
+    if groups.is_empty() {
+        // We should never end up here, but this is just to enforce the assumption above.
+        return Err(GgsqlError::InternalError(
+            "Boxplots cannot have empty groups".to_string(),
+        ));
+    }
+
+    // Query for boxplot summary statistics
+    let summary = boxplot_sql_compute_summary(query, &groups, &value_col, coef, dialect);
+    let stats_query = boxplot_sql_append_outliers(&summary, &groups, &value_col, query, outliers);
+
+    Ok(StatResult::Transformed {
+        query: stats_query,
+        stat_columns: vec![
+            "type".to_string(),
+            "value".to_string(),
+            "value2".to_string(),
+        ],
+        dummy_columns: vec![],
+        consumed_aesthetics: vec!["pos2".to_string()],
+    })
+}
+
+fn boxplot_sql_compute_summary(
+    from: &str,
+    groups: &[String],
+    value: &str,
+    coef: &f64,
+    dialect: &dyn SqlDialect,
+) -> String {
+    let quoted_groups: Vec<String> = groups.iter().map(|g| naming::quote_ident(g)).collect();
+    let groups_str = quoted_groups.join(", ");
+    let lower_expr = dialect.sql_greatest(&[&format!("q1 - {coef} * (q3 - q1)"), "min"]);
+    let upper_expr = dialect.sql_least(&[&format!("q3 + {coef} * (q3 - q1)"), "max"]);
+    let q1 = dialect.sql_percentile(value, 0.25, from, groups);
+    let median = dialect.sql_percentile(value, 0.50, from, groups);
+    let q3 = dialect.sql_percentile(value, 0.75, from, groups);
+    let qt = "\"__ggsql_qt__\"";
+    let fn_alias = "\"__ggsql_fn__\"";
+    let quoted_value = naming::quote_ident(value);
+    format!(
+        "SELECT
+          *,
+          {lower_expr} AS lower,
+          {upper_expr} AS upper
+        FROM (
+          SELECT
+            {groups},
+            MIN({value}) AS min,
+            MAX({value}) AS max,
+            {q1} AS q1,
+            {median} AS median,
+            {q3} AS q3
+          FROM ({from}) AS {qt}
+          WHERE {value} IS NOT NULL
+          GROUP BY {groups}
+        ) AS {fn_alias}",
+        lower_expr = lower_expr,
+        upper_expr = upper_expr,
+        groups = groups_str,
+        value = quoted_value,
+        from = from,
+        q1 = q1,
+        median = median,
+        q3 = q3,
+    )
+}
+
+fn boxplot_sql_filter_outliers(groups: &[String], value: &str, from: &str) -> String {
+    let mut join_pairs = Vec::new();
+    let mut keep_columns = Vec::new();
+    for column in groups {
+        let quoted = naming::quote_ident(column);
+        join_pairs.push(format!("raw.{} = summary.{}", quoted, quoted));
+        keep_columns.push(format!("raw.{}", quoted));
+    }
+
+    let quoted_value = naming::quote_ident(value);
+    // We're joining outliers with the summary to use the lower/upper whisker
+    // values as a filter
+    format!(
+        "SELECT
+          raw.{value} AS value,
+          'outlier' AS type,
+          {groups}
+        FROM ({from}) raw
+        JOIN summary ON {pairs}
+        WHERE raw.{value} NOT BETWEEN summary.lower AND summary.upper",
+        value = quoted_value,
+        groups = keep_columns.join(", "),
+        pairs = join_pairs.join(" AND "),
+        from = from
+    )
+}
+
+fn boxplot_sql_append_outliers(
+    from: &str,
+    groups: &[String],
+    value: &str,
+    raw_query: &str,
+    draw_outliers: &bool,
+) -> String {
+    let value_name = naming::quote_ident(&naming::stat_column("value"));
+    let value2_name = naming::quote_ident(&naming::stat_column("value2"));
+    let type_name = naming::quote_ident(&naming::stat_column("type"));
+
+    let quoted_groups: Vec<String> = groups.iter().map(|g| naming::quote_ident(g)).collect();
+    let groups_str = quoted_groups.join(", ");
+
+    // Helper to build visual-element rows from summary table
+    // Each row type maps to one visual element with y and yend where needed
+    let build_summary_select = |table: &str| {
+        format!(
+            "SELECT {groups}, 'lower_whisker' AS {type_name}, q1 AS {value_name}, lower AS {value2_name} FROM {table}
+            UNION ALL
+            SELECT {groups}, 'upper_whisker' AS {type_name}, q3 AS {value_name}, upper AS {value2_name} FROM {table}
+            UNION ALL
+            SELECT {groups}, 'box' AS {type_name}, q1 AS {value_name}, q3 AS {value2_name} FROM {table}
+            UNION ALL
+            SELECT {groups}, 'median' AS {type_name}, median AS {value_name}, NULL AS {value2_name} FROM {table}",
+            groups = groups_str,
+            type_name = type_name,
+            value_name = value_name,
+            value2_name = value2_name,
+            table = table
+        )
+    };
+
+    if !*draw_outliers {
+        // Build from subquery when no CTEs needed
+        return build_summary_select(&format!("({})", from));
+    }
+
+    // Grab query for outliers
+    let outliers = boxplot_sql_filter_outliers(groups, value, raw_query);
+
+    // Build summary select using CTE reference
+    let summary_select = build_summary_select("summary");
+
+    // Combine summary visual-elements with outliers
+    format!(
+        "WITH
+        summary AS (
+          {summary}
+        ),
+        outliers AS (
+          {outliers}
+        )
+        {summary_select}
+        UNION ALL
+          SELECT {groups}, type AS {type_name}, value AS {value_name}, NULL AS {value2_name}
+          FROM outliers
+        ",
+        summary = from,
+        outliers = outliers,
+        summary_select = summary_select,
+        type_name = type_name,
+        value_name = value_name,
+        value2_name = value2_name,
+        groups = groups_str
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reader::AnsiDialect;
+
+    // ==================== SQL Generation Tests (Compact) ====================
+
+    #[test]
+    fn test_sql_compute_summary_basic() {
+        let groups = vec!["category".to_string()];
+        let result = boxplot_sql_compute_summary("data", &groups, "value", &1.5, &AnsiDialect);
+        assert!(result.contains("NTILE(4) OVER (ORDER BY \"value\")"));
+        assert!(result.contains("AS q1"));
+        assert!(result.contains("AS median"));
+        assert!(result.contains("AS q3"));
+        assert!(result.contains("MIN(\"value\") AS min"));
+        assert!(result.contains("MAX(\"value\") AS max"));
+        assert!(result.contains("WHERE \"value\" IS NOT NULL"));
+        assert!(result.contains("GROUP BY \"category\""));
+        assert!(result.contains("CASE WHEN (q1 - 1.5"));
+        assert!(result.contains("CASE WHEN (q3 + 1.5"));
+    }
+
+    #[test]
+    fn test_sql_compute_summary_multiple_groups() {
+        let groups = vec!["cat".to_string(), "region".to_string()];
+        let result = boxplot_sql_compute_summary("tbl", &groups, "val", &1.5, &AnsiDialect);
+        assert!(result.contains("GROUP BY \"cat\", \"region\""));
+        assert!(result.contains("NTILE(4) OVER (ORDER BY \"val\")"));
+    }
+
+    #[test]
+    fn test_sql_compute_summary_custom_coef() {
+        let groups = vec!["pos1".to_string()];
+        let result = boxplot_sql_compute_summary("q", &groups, "pos2", &2.5, &AnsiDialect);
+        assert!(result.contains("2.5"));
+        assert!(
+            result.contains("(CASE WHEN (q1 - 2.5 * (q3 - q1)) >= (min) THEN (q1 - 2.5 * (q3 - q1)) ELSE (min) END)")
+        );
+        assert!(
+            result.contains("(CASE WHEN (q3 + 2.5 * (q3 - q1)) <= (max) THEN (q3 + 2.5 * (q3 - q1)) ELSE (max) END)")
+        );
+    }
+
+    #[test]
+    fn test_sql_filter_outliers_join() {
+        let groups = vec!["cat".to_string(), "region".to_string()];
+        let result = boxplot_sql_filter_outliers(&groups, "value", "raw_data");
+        assert!(result.contains("JOIN summary ON"));
+        assert!(result.contains("raw.\"cat\" = summary.\"cat\""));
+        assert!(result.contains("raw.\"region\" = summary.\"region\""));
+        assert!(result.contains("NOT BETWEEN summary.lower AND summary.upper"));
+        assert!(result.contains("'outlier' AS type"));
+    }
+
+    // ==================== SQL Snapshot Tests ====================
+
+    #[test]
+    fn test_boxplot_sql_compute_summary_single_group() {
+        let groups = vec!["category".to_string()];
+        let result = boxplot_sql_compute_summary(
+            "SELECT * FROM sales",
+            &groups,
+            "price",
+            &1.5,
+            &AnsiDialect,
+        );
+
+        let q1 = AnsiDialect.sql_percentile("price", 0.25, "SELECT * FROM sales", &groups);
+        let median = AnsiDialect.sql_percentile("price", 0.50, "SELECT * FROM sales", &groups);
+        let q3 = AnsiDialect.sql_percentile("price", 0.75, "SELECT * FROM sales", &groups);
+        let expected = format!(
+            r#"SELECT
+          *,
+          (CASE WHEN (q1 - 1.5 * (q3 - q1)) >= (min) THEN (q1 - 1.5 * (q3 - q1)) ELSE (min) END) AS lower,
+          (CASE WHEN (q3 + 1.5 * (q3 - q1)) <= (max) THEN (q3 + 1.5 * (q3 - q1)) ELSE (max) END) AS upper
+        FROM (
+          SELECT
+            "category",
+            MIN("price") AS min,
+            MAX("price") AS max,
+            {q1} AS q1,
+            {median} AS median,
+            {q3} AS q3
+          FROM (SELECT * FROM sales) AS "__ggsql_qt__"
+          WHERE "price" IS NOT NULL
+          GROUP BY "category"
+        ) AS "__ggsql_fn__""#
+        );
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_boxplot_sql_compute_summary_multiple_groups() {
+        let groups = vec!["region".to_string(), "product".to_string()];
+        let result = boxplot_sql_compute_summary(
+            "SELECT * FROM data",
+            &groups,
+            "revenue",
+            &1.5,
+            &AnsiDialect,
+        );
+
+        let q1 = AnsiDialect.sql_percentile("revenue", 0.25, "SELECT * FROM data", &groups);
+        let median = AnsiDialect.sql_percentile("revenue", 0.50, "SELECT * FROM data", &groups);
+        let q3 = AnsiDialect.sql_percentile("revenue", 0.75, "SELECT * FROM data", &groups);
+        let expected = format!(
+            r#"SELECT
+          *,
+          (CASE WHEN (q1 - 1.5 * (q3 - q1)) >= (min) THEN (q1 - 1.5 * (q3 - q1)) ELSE (min) END) AS lower,
+          (CASE WHEN (q3 + 1.5 * (q3 - q1)) <= (max) THEN (q3 + 1.5 * (q3 - q1)) ELSE (max) END) AS upper
+        FROM (
+          SELECT
+            "region", "product",
+            MIN("revenue") AS min,
+            MAX("revenue") AS max,
+            {q1} AS q1,
+            {median} AS median,
+            {q3} AS q3
+          FROM (SELECT * FROM data) AS "__ggsql_qt__"
+          WHERE "revenue" IS NOT NULL
+          GROUP BY "region", "product"
+        ) AS "__ggsql_fn__""#
+        );
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_boxplot_sql_append_outliers_with_outliers() {
+        let groups = vec!["category".to_string()];
+        let summary = "summary_query";
+        let raw = "raw_query";
+        let result = boxplot_sql_append_outliers(summary, &groups, "value", raw, &true);
+
+        // Check key components for visual-element rows format
+        assert!(result.contains("WITH"));
+        assert!(result.contains("summary AS ("));
+        assert!(result.contains("summary_query"));
+        assert!(result.contains("outliers AS ("));
+        assert!(result.contains("UNION ALL"));
+
+        // Should contain visual element type names
+        assert!(result.contains("'lower_whisker'"));
+        assert!(result.contains("'upper_whisker'"));
+        assert!(result.contains("'box'"));
+        assert!(result.contains("'median'"));
+
+        // Check column names
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("value"))));
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("value2"))));
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("type"))));
+    }
+
+    #[test]
+    fn test_boxplot_sql_append_outliers_without_outliers() {
+        let groups = vec!["pos1".to_string()];
+        let summary = "sum_query";
+        let raw = "raw_query";
+        let result = boxplot_sql_append_outliers(summary, &groups, "pos2", raw, &false);
+
+        // Should NOT include WITH or outliers CTE
+        assert!(!result.contains("WITH"));
+        assert!(!result.contains("outliers AS"));
+
+        // Should contain visual element type names via UNION ALL
+        assert!(result.contains("UNION ALL"));
+        assert!(result.contains("'lower_whisker'"));
+        assert!(result.contains("'upper_whisker'"));
+        assert!(result.contains("'box'"));
+        assert!(result.contains("'median'"));
+
+        // Check column names
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("value"))));
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("value2"))));
+        assert!(result.contains(&format!("AS \"{}\"", naming::stat_column("type"))));
+    }
+
+    #[test]
+    fn test_boxplot_sql_append_outliers_multi_group() {
+        let groups = vec!["cat".to_string(), "region".to_string(), "year".to_string()];
+        let summary = "(SELECT * FROM stats)";
+        let raw = "(SELECT * FROM raw_data)";
+        let result = boxplot_sql_append_outliers(summary, &groups, "val", raw, &true);
+
+        // Verify all groups are present (quoted)
+        assert!(result.contains("\"cat\", \"region\", \"year\""));
+
+        // Check structure
+        assert!(result.contains("WITH"));
+        assert!(result.contains("summary AS"));
+        assert!(result.contains("outliers AS"));
+
+        // Verify outlier join conditions for all groups
+        let outlier_section = result.split("outliers AS").nth(1).unwrap();
+        assert!(outlier_section.contains("raw.\"cat\" = summary.\"cat\""));
+        assert!(outlier_section.contains("raw.\"region\" = summary.\"region\""));
+        assert!(outlier_section.contains("raw.\"year\" = summary.\"year\""));
+    }
+
+    // ==================== GeomTrait Implementation Tests ====================
+
+    #[test]
+    fn test_boxplot_geom_type() {
+        let boxplot = Boxplot;
+        assert_eq!(boxplot.geom_type(), GeomType::Boxplot);
+    }
+
+    #[test]
+    fn test_boxplot_aesthetics_required() {
+        let boxplot = Boxplot;
+        let aes = boxplot.aesthetics();
+
+        assert!(aes.is_required("pos1"));
+        assert!(aes.is_required("pos2"));
+        assert_eq!(aes.required().len(), 2);
+    }
+
+    #[test]
+    fn test_boxplot_aesthetics_supported() {
+        let boxplot = Boxplot;
+        let aes = boxplot.aesthetics();
+
+        assert!(aes.is_supported("pos1"));
+        assert!(aes.is_supported("pos2"));
+        assert!(aes.is_supported("fill"));
+        assert!(aes.is_supported("stroke"));
+        assert!(aes.is_supported("opacity"));
+    }
+
+    #[test]
+    fn test_boxplot_default_params() {
+        let boxplot = Boxplot;
+        let params = boxplot.default_params();
+
+        assert_eq!(params.len(), 4);
+
+        // Find and verify outliers param
+        let outliers_param = params.iter().find(|p| p.name == "outliers").unwrap();
+        assert!(matches!(
+            outliers_param.default,
+            DefaultParamValue::Boolean(true)
+        ));
+
+        // Find and verify coef param
+        let coef_param = params.iter().find(|p| p.name == "coef").unwrap();
+        assert!(
+            matches!(coef_param.default, DefaultParamValue::Number(v) if (v - 1.5).abs() < f64::EPSILON)
+        );
+
+        // Find and verify width param
+        let width_param = params.iter().find(|p| p.name == "width").unwrap();
+        assert!(
+            matches!(width_param.default, DefaultParamValue::Number(v) if (v - 0.9).abs() < f64::EPSILON)
+        );
+
+        // Find and verify position param (boxplot defaults to dodge)
+        let position_param = params.iter().find(|p| p.name == "position").unwrap();
+        assert!(matches!(
+            position_param.default,
+            DefaultParamValue::String("dodge")
+        ));
+    }
+
+    #[test]
+    fn test_boxplot_default_remappings() {
+        use crate::plot::types::DefaultAestheticValue;
+
+        let boxplot = Boxplot;
+        let remappings = boxplot.default_remappings();
+
+        assert_eq!(remappings.defaults.len(), 3);
+        assert!(remappings
+            .defaults
+            .contains(&("pos2", DefaultAestheticValue::Column("value"))));
+        assert!(remappings
+            .defaults
+            .contains(&("pos2end", DefaultAestheticValue::Column("value2"))));
+        assert!(remappings
+            .defaults
+            .contains(&("type", DefaultAestheticValue::Column("type"))));
+    }
+
+    #[test]
+    fn test_boxplot_stat_consumed_aesthetics() {
+        let boxplot = Boxplot;
+        let consumed = boxplot.stat_consumed_aesthetics();
+
+        assert_eq!(consumed.len(), 1);
+        assert_eq!(consumed[0], "pos2");
+    }
+
+    #[test]
+    fn test_boxplot_needs_stat_transform() {
+        let boxplot = Boxplot;
+        let aesthetics = Mappings::new();
+        assert!(boxplot.needs_stat_transform(&aesthetics));
+    }
+
+    #[test]
+    fn test_boxplot_display() {
+        let boxplot = Boxplot;
+        assert_eq!(format!("{}", boxplot), "boxplot");
+    }
+}

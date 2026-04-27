@@ -1,0 +1,103 @@
+name: publish-website.yaml
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish-website:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Increase disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo docker builder prune -a
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install tree-sitter-cli
+        run: npm install -g tree-sitter-cli
+
+      - name: Install LLVM
+        run: sudo apt-get install -y llvm
+
+      - name: Install ODBC
+        run: sudo apt-get install -y unixodbc-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Caching
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ runner.os }}-publish
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Install wasm-opt
+        run: cargo install wasm-opt
+
+      - name: Setup quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: pre-release
+
+      - name: Setup Jupyter
+        run: python3 -m pip install jupyter jupyterlab
+
+      - name: Build Jupyter kernel
+        run: cargo build --release --package ggsql-jupyter
+
+      - name: Install Jupyter kernel
+        run: ./target/release/ggsql-jupyter --install
+
+      - name: Build WASM library
+        working-directory: ggsql-wasm/library
+        run: npm install && npm run build
+
+      - name: Build WASM package
+        working-directory: ggsql-wasm
+        run: wasm-pack build --target web --profile wasm --no-opt
+
+      - name: Optimise WASM binary
+        working-directory: ggsql-wasm
+        run: wasm-opt pkg/ggsql_wasm_bg.wasm -o pkg/ggsql_wasm_bg.wasm -Oz --all-features
+
+      - name: Build WASM demo
+        working-directory: ggsql-wasm/demo
+        run: npm install && npm run build
+
+      - name: Copying output to doc/wasm...
+        working-directory: ggsql-wasm/demo
+        run: cp -r dist ../../doc/wasm
+
+      - name: Render and Publish
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: quarto-dev/quarto-actions/publish@v2
+        with:
+          target: gh-pages
+          path: doc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Render
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main' && github.event_name != 'workflow_dispatch'
+        uses: quarto-dev/quarto-actions/render@v2
+        with:
+          to: html
+          path: doc

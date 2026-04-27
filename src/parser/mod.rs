@@ -1,7 +1,7 @@
 /*!
-ggSQL Parser Module
+ggsql Parser Module
 
-Handles splitting ggSQL queries into SQL and visualization portions, then parsing
+Handles splitting ggsql queries into SQL and visualization portions, then parsing
 the visualization specification into a typed AST.
 
 ## Architecture
@@ -19,96 +19,62 @@ the visualization specification into a typed AST.
 
 ```rust
 # use ggsql::parser::parse_query;
-# use ggsql::{Geom, VizType};
+# use ggsql::Geom;
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let query = r#"
     SELECT date, revenue, region FROM sales WHERE year = 2024
-    VISUALISE AS PLOT
-    WITH line USING
-        x = date,
-        y = revenue,
-        color = region
+    VISUALISE date AS x, revenue AS y, region AS color
+    DRAW line
     LABEL
-        title = 'Sales by Region'
+        title => 'Sales by Region'
 "#;
 
 let specs = parse_query(query)?;
 assert_eq!(specs.len(), 1);
-assert_eq!(specs[0].viz_type, VizType::Plot);
 assert_eq!(specs[0].layers.len(), 1);
-assert_eq!(specs[0].layers[0].geom, Geom::Line);
+assert_eq!(specs[0].layers[0].geom, Geom::line());
 # Ok(())
 # }
 ```
 */
 
-use tree_sitter::Tree;
-use crate::{GgsqlError, Result};
+use crate::{Plot, Result};
 
-pub mod ast;
-pub mod splitter;
 pub mod builder;
-pub mod error;
+pub mod source_tree;
 
-// Re-export key types
-pub use ast::*;
-pub use error::ParseError;
-pub use splitter::split_query;
+pub use builder::build_ast;
+pub use source_tree::SourceTree;
 
-/// Main entry point for parsing ggSQL queries
+/// Main entry point for parsing ggsql queries
 ///
-/// Takes a complete ggSQL query (SQL + VISUALISE) and returns a vector of
+/// Takes a complete ggsql query (SQL + VISUALISE) and returns a vector of
 /// parsed specifications (one per VISUALISE statement).
-pub fn parse_query(query: &str) -> Result<Vec<VizSpec>> {
-    // Parse the full query using tree-sitter (includes SQL + VISUALISE portions)
-    let tree = parse_full_query(query)?;
+pub fn parse_query(query: &str) -> Result<Vec<Plot>> {
+    // Parse the full query and create SourceTree
+    let source_tree = SourceTree::new(query)?;
 
-    // Build AST from the tree-sitter parse tree
-    let specs = builder::build_ast(&tree, query)?;
+    // Validate the parse tree has no errors
+    source_tree.validate()?;
+
+    // Build AST from the parse tree
+    let specs = builder::build_ast(&source_tree)?;
 
     Ok(specs)
-}
-
-/// Parse the full ggSQL query (SQL + VISUALISE) using tree-sitter
-fn parse_full_query(query: &str) -> Result<Tree> {
-    let mut parser = tree_sitter::Parser::new();
-
-    // Set the tree-sitter-ggsql language
-    parser
-        .set_language(&tree_sitter_ggsql::language())
-        .map_err(|e| GgsqlError::ParseError(format!("Failed to set language: {}", e)))?;
-
-    // Parse the full query (SQL + VISUALISE portions together)
-    let tree = parser
-        .parse(query, None)
-        .ok_or_else(|| GgsqlError::ParseError("Failed to parse query".to_string()))?;
-
-    // Check for parse errors
-    if tree.root_node().has_error() {
-        return Err(GgsqlError::ParseError("Parse tree contains errors".to_string()));
-    }
-
-    Ok(tree)
-}
-
-/// Extract just the SQL portion from a ggSQL query
-pub fn extract_sql(query: &str) -> Result<String> {
-    let (sql_part, _) = splitter::split_query(query)?;
-    Ok(sql_part)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plot::ParameterValue;
+    use crate::{AestheticValue, DataSource, Geom};
 
     #[test]
     fn test_simple_query_parsing() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALISE AS PLOT
-            WITH point USING
-                x = x,
-                y = y
+            VISUALISE x, y
+            DRAW point
         "#;
 
         let result = parse_query(query);
@@ -116,20 +82,20 @@ mod tests {
 
         let specs = result.unwrap();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
         assert_eq!(specs[0].layers.len(), 1);
-        assert_eq!(specs[0].layers[0].geom, Geom::Point);
+        assert_eq!(specs[0].layers[0].geom, Geom::point());
     }
 
     #[test]
     fn test_sql_extraction() {
         let query = r#"
             SELECT date, revenue FROM sales WHERE year = 2024
-            VISUALISE AS PLOT
-            WITH line USING x = date, y = revenue
+            VISUALISE date AS x, revenue AS y
+            DRAW line
         "#;
 
-        let sql = extract_sql(query).unwrap();
+        let source_tree = SourceTree::new(query).unwrap();
+        let sql = source_tree.extract_sql().unwrap();
         assert!(sql.contains("SELECT date, revenue FROM sales"));
         assert!(sql.contains("WHERE year = 2024"));
         assert!(!sql.contains("VISUALISE"));
@@ -139,39 +105,23 @@ mod tests {
     fn test_multi_layer_query() {
         let query = r#"
             SELECT x, y, z FROM data
-            VISUALISE AS PLOT
-            WITH line USING
-                x = x,
-                y = y
-            WITH point USING
-                x = x,
-                y = z,
-                color = 'red'
+            VISUALISE x, y
+            DRAW line
+            DRAW point MAPPING z AS y, 'value' AS color
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].layers.len(), 2);
         // First layer is line, second layer is point
-        assert_eq!(specs[0].layers[0].geom, Geom::Line);
-        assert_eq!(specs[0].layers[1].geom, Geom::Point);
+        assert_eq!(specs[0].layers[0].geom, Geom::line());
+        assert_eq!(specs[0].layers[1].geom, Geom::point());
 
-        // Check aesthetics are parsed correctly
-        assert_eq!(specs[0].layers[0].aesthetics.len(), 2);
+        // Second layer should have y and color
+        assert_eq!(specs[0].layers[1].mappings.len(), 2);
         assert!(matches!(
-            specs[0].layers[0].aesthetics.get("x"),
-            Some(AestheticValue::Column(col)) if col == "x"
-        ));
-        assert!(matches!(
-            specs[0].layers[0].aesthetics.get("y"),
-            Some(AestheticValue::Column(col)) if col == "y"
-        ));
-
-        // Second layer should have x, y, and color
-        assert_eq!(specs[0].layers[1].aesthetics.len(), 3);
-        assert!(matches!(
-            specs[0].layers[1].aesthetics.get("color"),
-            Some(AestheticValue::Literal(LiteralValue::String(s))) if s == "red"
+            specs[0].layers[1].mappings.get("color"),
+            Some(AestheticValue::Literal(ParameterValue::String(s))) if s == "value"
         ));
     }
 
@@ -179,112 +129,103 @@ mod tests {
     fn test_multiple_visualizations() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALISE AS PLOT
-            WITH point USING x = x, y = y
-            VISUALIZE AS TABLE
+            VISUALISE x, y
+            DRAW point
+            VISUALIZE
+            DRAW bar MAPPING x AS x, y AS y
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 2);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
         assert_eq!(specs[0].layers.len(), 1);
-        assert_eq!(specs[1].viz_type, VizType::Table);
-        assert_eq!(specs[1].layers.len(), 0);
+        assert_eq!(specs[1].layers.len(), 1);
     }
 
     #[test]
     fn test_american_spelling() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALIZE AS MAP
-            WITH tile USING x = x, y = y
+            VISUALIZE x, y
+            DRAW point
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].viz_type, VizType::Map);
+        assert_eq!(specs[0].layers[0].geom, Geom::point());
     }
 
     #[test]
     fn test_three_visualizations() {
         let query = r#"
             SELECT x, y, z FROM data
-            VISUALISE AS PLOT
-            WITH point USING x = x, y = y
-            VISUALIZE AS TABLE
-            VISUALISE AS MAP
-            WITH tile USING x = x, y = y
+            VISUALISE x, y
+            DRAW point
+            VISUALIZE
+            DRAW bar MAPPING x AS x, y AS y
+            VISUALISE z AS x, y AS y
+            DRAW point
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 3);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
         assert_eq!(specs[0].layers.len(), 1);
-        assert_eq!(specs[1].viz_type, VizType::Table);
-        assert_eq!(specs[1].layers.len(), 0);
-        assert_eq!(specs[2].viz_type, VizType::Map);
+        assert_eq!(specs[1].layers.len(), 1);
         assert_eq!(specs[2].layers.len(), 1);
     }
 
     #[test]
-    fn test_all_viz_types() {
+    fn test_empty_visualise() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALISE AS PLOT
-            VISUALIZE AS TABLE
-            VISUALISE AS MAP
+            VISUALISE
+            DRAW point MAPPING x AS x, y AS y
         "#;
 
         let specs = parse_query(query).unwrap();
-        assert_eq!(specs.len(), 3);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
-        assert_eq!(specs[1].viz_type, VizType::Table);
-        assert_eq!(specs[2].viz_type, VizType::Map);
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].global_mappings.is_empty());
     }
 
     #[test]
     fn test_multiple_viz_with_different_clauses() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALISE AS PLOT
-            WITH point USING x = x, y = y
-            LABEL title = 'Scatter Plot'
-            THEME minimal
-            VISUALIZE AS TABLE
+            VISUALISE x, y
+            DRAW point
+            LABEL title => 'Scatter Plot'
+            VISUALIZE
+            DRAW bar MAPPING x AS x, y AS y
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 2);
 
-        // First viz should have layers, labels, and theme
-        assert_eq!(specs[0].viz_type, VizType::Plot);
+        // First viz should have layers and labels
         assert_eq!(specs[0].layers.len(), 1);
         assert!(specs[0].labels.is_some());
-        assert!(specs[0].theme.is_some());
 
-        // Second viz should be empty
-        assert_eq!(specs[1].viz_type, VizType::Table);
-        assert_eq!(specs[1].layers.len(), 0);
+        // Second viz should have layer but no labels
+        assert_eq!(specs[1].layers.len(), 1);
         assert!(specs[1].labels.is_none());
-        assert!(specs[1].theme.is_none());
     }
 
     #[test]
     fn test_mixed_spelling_multiple_viz() {
         let query = r#"
             SELECT x, y FROM data
-            VISUALISE AS PLOT
-            WITH line USING x = x, y = y
-            VISUALIZE AS MAP
-            WITH tile USING x = x, y = y
-            VISUALISE AS TABLE
+            VISUALISE x, y
+            DRAW line
+            VISUALIZE
+            DRAW point MAPPING x AS x, y AS y
+            VISUALISE
+            DRAW bar MAPPING x AS x, y AS y
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 3);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
-        assert_eq!(specs[1].viz_type, VizType::Map);
-        assert_eq!(specs[2].viz_type, VizType::Table);
+        assert_eq!(specs[0].layers[0].geom, Geom::line());
+        assert_eq!(specs[1].layers[0].geom, Geom::point());
+        assert_eq!(specs[2].layers[0].geom, Geom::bar());
     }
 
     #[test]
@@ -292,58 +233,235 @@ mod tests {
         let query = r#"
             SELECT date, revenue, cost FROM sales
             WHERE year >= 2023
-            VISUALISE AS PLOT
-            WITH line USING x = date, y = revenue
-            WITH line USING x = date, y = cost
-            SCALE x USING type = 'date'
-            LABEL title = 'Revenue and Cost Trends'
-            THEME minimal
-            VISUALIZE AS TABLE
-            VISUALISE AS MAP
-            WITH tile USING x = date, y = revenue
+            VISUALISE date AS x, revenue AS y
+            DRAW line
+            DRAW line MAPPING cost AS y
+            SCALE x VIA date
+            LABEL title => 'Revenue and Cost Trends'
+            VISUALIZE
+            DRAW bar MAPPING date AS x, revenue AS y
+            VISUALISE
+            DRAW point MAPPING date AS x, revenue AS y
         "#;
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 3);
 
-        // Plot with 2 layers, scale, labels, theme
-        assert_eq!(specs[0].viz_type, VizType::Plot);
+        // Plot with 2 layers, scale, labels
         assert_eq!(specs[0].layers.len(), 2);
         assert_eq!(specs[0].scales.len(), 1);
         assert!(specs[0].labels.is_some());
-        assert!(specs[0].theme.is_some());
 
-        // Table with no clauses
-        assert_eq!(specs[1].viz_type, VizType::Table);
-        assert_eq!(specs[1].layers.len(), 0);
+        // Second viz with 1 layer
+        assert_eq!(specs[1].layers.len(), 1);
 
-        // Map with 1 layer
-        assert_eq!(specs[2].viz_type, VizType::Map);
+        // Third viz with 1 layer
         assert_eq!(specs[2].layers.len(), 1);
     }
 
     #[test]
     fn test_values_subquery() {
-        let query = "SELECT * FROM (VALUES (1, 2)) AS t(x, y) VISUALISE AS PLOT WITH point USING x = x, y = y";
+        let query = "SELECT * FROM (VALUES (1, 2)) AS t(x, y) VISUALISE x, y DRAW point";
 
         // First check if tree-sitter can parse it
-        let tree = parse_full_query(query);
-        if let Err(ref e) = tree {
+        let source_tree = SourceTree::new(query);
+        if let Err(ref e) = source_tree {
             eprintln!("Parse error: {}", e);
         }
 
         // Print the tree
-        if let Ok(ref t) = tree {
-            let root = t.root_node();
+        if let Ok(ref st) = source_tree {
+            let root = st.root();
             eprintln!("Root kind: {}", root.kind());
             eprintln!("Has error: {}", root.has_error());
             eprintln!("Tree: {}", root.to_sexp());
         }
 
-        assert!(tree.is_ok(), "Failed to parse VALUES subquery: {:?}", tree);
+        assert!(
+            source_tree.is_ok(),
+            "Failed to parse VALUES subquery: {:?}",
+            source_tree
+        );
 
         let specs = parse_query(query).unwrap();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].viz_type, VizType::Plot);
+    }
+
+    #[test]
+    fn test_wildcard_global_mapping() {
+        let query = r#"
+            SELECT x, y FROM data
+            VISUALISE *
+            DRAW point
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert!(specs[0].global_mappings.wildcard);
+        assert!(specs[0].global_mappings.aesthetics.is_empty());
+    }
+
+    #[test]
+    fn test_explicit_global_mapping() {
+        let query = r#"
+            VISUALISE date AS x, revenue AS y
+            DRAW line
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        let mapping = &specs[0].global_mappings;
+        assert!(!mapping.wildcard);
+        assert_eq!(mapping.aesthetics.len(), 2);
+        // After parsing, aesthetics are transformed to internal names
+        assert!(mapping.aesthetics.contains_key("pos1")); // x -> pos1
+        assert!(mapping.aesthetics.contains_key("pos2")); // y -> pos2
+                                                          // Column names remain unchanged
+        assert_eq!(
+            mapping.aesthetics.get("pos1").unwrap().column_name(),
+            Some("date")
+        );
+        assert_eq!(
+            mapping.aesthetics.get("pos2").unwrap().column_name(),
+            Some("revenue")
+        );
+    }
+
+    #[test]
+    fn test_implicit_global_mapping() {
+        let query = r#"
+            VISUALISE x, y
+            DRAW point
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        let mapping = &specs[0].global_mappings;
+        assert!(!mapping.wildcard);
+        assert_eq!(mapping.aesthetics.len(), 2);
+        // Implicit mappings: x maps to column x, y maps to column y
+        // Aesthetic keys are transformed to internal names: x -> pos1, y -> pos2
+        assert_eq!(
+            mapping.aesthetics.get("pos1").unwrap().column_name(),
+            Some("x")
+        );
+        assert_eq!(
+            mapping.aesthetics.get("pos2").unwrap().column_name(),
+            Some("y")
+        );
+    }
+
+    #[test]
+    fn test_mixed_global_mapping() {
+        let query = r#"
+            VISUALISE x, y, region AS color
+            DRAW point
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        let mapping = &specs[0].global_mappings;
+        assert!(!mapping.wildcard);
+        assert_eq!(mapping.aesthetics.len(), 3);
+        // Implicit x and y (transformed to pos1, pos2), explicit color
+        assert_eq!(
+            mapping.aesthetics.get("pos1").unwrap().column_name(),
+            Some("x")
+        );
+        assert_eq!(
+            mapping.aesthetics.get("pos2").unwrap().column_name(),
+            Some("y")
+        );
+        assert_eq!(
+            mapping.aesthetics.get("color").unwrap().column_name(),
+            Some("region")
+        );
+    }
+
+    #[test]
+    fn test_visualise_from_table() {
+        let query = r#"
+            VISUALISE x, y FROM sales
+            DRAW bar
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].source,
+            Some(DataSource::Identifier("sales".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_visualise_from_cte() {
+        let query = r#"
+            WITH cte AS (SELECT * FROM data)
+            VISUALISE x, y FROM cte
+            DRAW point
+        "#;
+
+        let specs = parse_query(query).unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].source,
+            Some(DataSource::Identifier("cte".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_place_clause() {
+        let query = r#"
+            SELECT x, y FROM data
+            VISUALISE x, y
+            DRAW point
+            PLACE text SETTING x => 5, y => 10, label => 'Hello'
+        "#;
+
+        let result = parse_query(query);
+        assert!(result.is_ok(), "Failed to parse PLACE clause: {:?}", result);
+
+        let specs = result.unwrap();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].layers.len(), 2, "Expected 2 layers (DRAW + PLACE)");
+
+        // First layer: regular DRAW point
+        assert_eq!(specs[0].layers[0].geom, Geom::point());
+        assert!(
+            specs[0].layers[0].source.is_none(),
+            "DRAW layer should have no explicit source"
+        );
+
+        // Second layer: PLACE text with annotation source
+        assert_eq!(specs[0].layers[1].geom, Geom::text());
+        assert!(
+            matches!(specs[0].layers[1].source, Some(DataSource::Annotation)),
+            "PLACE layer should have Annotation source"
+        );
+
+        // After parsing, annotation layer parameters stay in parameters
+        // They are only moved to mappings during execution (in process_annotation_layer)
+        // (transform_aesthetics_to_internal runs and transforms x→pos1, y→pos2)
+        assert_eq!(
+            specs[0].layers[1].parameters.get("pos1"),
+            Some(&ParameterValue::Number(5.0)),
+            "x should be transformed to pos1 but remain in parameters at parse time"
+        );
+        assert_eq!(
+            specs[0].layers[1].parameters.get("pos2"),
+            Some(&ParameterValue::Number(10.0)),
+            "y should be transformed to pos2 but remain in parameters at parse time"
+        );
+        assert_eq!(
+            specs[0].layers[1].parameters.get("label"),
+            Some(&ParameterValue::String("Hello".to_string())),
+            "label (required) also remains in parameters at parse time"
+        );
+
+        // Mappings should be empty at parse time for annotation layers
+        assert!(
+            specs[0].layers[1].mappings.is_empty(),
+            "Annotation layer mappings should be empty at parse time (populated during execution)"
+        );
     }
 }

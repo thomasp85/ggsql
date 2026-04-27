@@ -1,0 +1,176 @@
+//! Polar coordinate system implementation
+
+use super::{CoordKind, CoordTrait};
+use crate::plot::types::{DefaultParamValue, ParamConstraint, ParamDefinition};
+
+/// Polar coordinate system - for pie charts, rose plots
+#[derive(Debug, Clone, Copy)]
+pub struct Polar;
+
+impl CoordTrait for Polar {
+    fn coord_kind(&self) -> CoordKind {
+        CoordKind::Polar
+    }
+
+    fn name(&self) -> &'static str {
+        "polar"
+    }
+
+    fn position_aesthetic_names(&self) -> &'static [&'static str] {
+        &["radius", "angle"]
+    }
+
+    fn default_properties(&self) -> &'static [ParamDefinition] {
+        const PARAMS: &[ParamDefinition] = &[
+            ParamDefinition {
+                name: "clip",
+                default: DefaultParamValue::Boolean(true),
+                constraint: ParamConstraint::boolean(),
+            },
+            ParamDefinition {
+                name: "start",
+                default: DefaultParamValue::Number(0.0), // 0 degrees = 12 o'clock
+                constraint: ParamConstraint::number_range(-360.0, 360.0),
+            },
+            ParamDefinition {
+                name: "end",
+                default: DefaultParamValue::Null,
+                constraint: ParamConstraint::number_range(-360.0, 360.0),
+            },
+            ParamDefinition {
+                name: "inner",
+                default: DefaultParamValue::Null,
+                constraint: ParamConstraint::number_range(0.0, 1.0),
+            },
+        ];
+        PARAMS
+    }
+}
+
+impl std::fmt::Display for Polar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plot::ParameterValue;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_polar_properties() {
+        let polar = Polar;
+        assert_eq!(polar.coord_kind(), CoordKind::Polar);
+        assert_eq!(polar.name(), "polar");
+    }
+
+    #[test]
+    fn test_polar_default_properties() {
+        let polar = Polar;
+        let defaults = polar.default_properties();
+        let names: Vec<&str> = defaults.iter().map(|p| p.name).collect();
+        assert!(names.contains(&"clip"));
+        assert!(names.contains(&"start"));
+        assert!(names.contains(&"end"));
+        assert!(names.contains(&"inner"));
+        assert_eq!(defaults.len(), 4);
+    }
+
+    #[test]
+    fn test_polar_start_default() {
+        let polar = Polar;
+        let defaults = polar.default_properties();
+        let start_param = defaults.iter().find(|p| p.name == "start").unwrap();
+        assert!(matches!(
+            start_param.default,
+            DefaultParamValue::Number(0.0)
+        ));
+    }
+
+    #[test]
+    fn test_polar_rejects_unknown_property() {
+        let polar = Polar;
+        let mut props = HashMap::new();
+        props.insert(
+            "unknown".to_string(),
+            ParameterValue::String("value".to_string()),
+        );
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_err());
+        let err = resolved.unwrap_err();
+        assert!(err.contains("not 'unknown'"));
+    }
+
+    #[test]
+    fn test_polar_resolve_with_explicit_start() {
+        let polar = Polar;
+        let mut props = HashMap::new();
+        props.insert("start".to_string(), ParameterValue::Number(90.0));
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_ok());
+        let resolved = resolved.unwrap();
+        assert_eq!(
+            resolved.get("start").unwrap(),
+            &ParameterValue::Number(90.0)
+        );
+    }
+
+    #[test]
+    fn test_polar_resolve_adds_start_default() {
+        let polar = Polar;
+        let props = HashMap::new();
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_ok());
+        let resolved = resolved.unwrap();
+        assert!(resolved.contains_key("start"));
+        assert_eq!(resolved.get("start").unwrap(), &ParameterValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_polar_resolve_with_explicit_end() {
+        let polar = Polar;
+        let mut props = HashMap::new();
+        props.insert("end".to_string(), ParameterValue::Number(180.0));
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_ok());
+        let resolved = resolved.unwrap();
+        assert_eq!(resolved.get("end").unwrap(), &ParameterValue::Number(180.0));
+        // start should still get its default
+        assert_eq!(resolved.get("start").unwrap(), &ParameterValue::Number(0.0));
+    }
+
+    #[test]
+    fn test_polar_resolve_with_start_and_end() {
+        let polar = Polar;
+        let mut props = HashMap::new();
+        props.insert("start".to_string(), ParameterValue::Number(-90.0));
+        props.insert("end".to_string(), ParameterValue::Number(90.0));
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_ok());
+        let resolved = resolved.unwrap();
+        assert_eq!(
+            resolved.get("start").unwrap(),
+            &ParameterValue::Number(-90.0)
+        );
+        assert_eq!(resolved.get("end").unwrap(), &ParameterValue::Number(90.0));
+    }
+
+    #[test]
+    fn test_polar_resolve_with_inner() {
+        let polar = Polar;
+        let mut props = HashMap::new();
+        props.insert("inner".to_string(), ParameterValue::Number(0.5));
+
+        let resolved = polar.resolve_properties(&props);
+        assert!(resolved.is_ok());
+        let resolved = resolved.unwrap();
+        assert_eq!(resolved.get("inner").unwrap(), &ParameterValue::Number(0.5));
+    }
+}

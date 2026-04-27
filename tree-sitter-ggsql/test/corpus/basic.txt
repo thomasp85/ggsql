@@ -1,511 +1,860 @@
 ================================================================================
-Simple point plot
+Simple point plot with MAPPING
 ================================================================================
 
-VISUALISE AS PLOT WITH point USING x = x, y = y
+VISUALISE
+DRAW point MAPPING x AS x, y AS y
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
     (viz_clause
-      (with_clause
+      (draw_clause
         (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))))
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
 
 ================================================================================
-Multi-layer plot
+Global mapping with explicit mappings
 ================================================================================
 
-VISUALISE AS PLOT
-WITH line USING x = date, y = value
-WITH point USING x = date, y = value, color = 'red'
+VISUALISE date AS x, revenue AS y
+DRAW line
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Global mapping with implicit mappings
+================================================================================
+
+VISUALISE x, y
+DRAW point
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Wildcard global mapping
+================================================================================
+
+VISUALISE *
+DRAW point
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (wildcard_mapping))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Mixed explicit and implicit global mapping
+================================================================================
+
+VISUALISE x, y, region AS color
+DRAW line
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Multi-layer plot with global mapping
+================================================================================
+
+VISUALISE date AS x, value AS y
+DRAW line
+DRAW point MAPPING 'value' AS color
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (draw_clause
         (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (literal_value
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (literal_value
+                    (string)))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+DRAW with SETTING clause
+================================================================================
+
+VISUALISE x, y
+DRAW point SETTING opacity => 0.5, size => 3
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number)))
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))))))
+
+================================================================================
+DRAW with FILTER clause
+================================================================================
+
+VISUALISE x, y
+DRAW point FILTER x > 10
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))))))
+
+================================================================================
+DRAW with FILTER AND condition
+================================================================================
+
+VISUALISE
+DRAW point MAPPING x AS x FILTER a > 10 AND b < 20
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))
+            (filter_token)
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))))))
+
+================================================================================
+DRAW with FILTER OR condition
+================================================================================
+
+VISUALISE
+DRAW point MAPPING x AS x FILTER a = 1 OR b = 2
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))
+            (filter_token)
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))))))
+
+================================================================================
+DRAW with all clauses
+================================================================================
+
+VISUALISE
+DRAW point MAPPING x AS x, y AS y SETTING opacity => 0.5 FILTER year > 2020
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))))))
+
+================================================================================
+DRAW with string comparison in FILTER
+================================================================================
+
+VISUALISE
+DRAW point MAPPING x AS x FILTER region = 'North'
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
               (string))))))))
 
 ================================================================================
-Plot with scales and theme
+DRAW geom only (no MAPPING)
 ================================================================================
 
-VISUALISE AS PLOT
-WITH point USING x = x, y = y, color = group
-SCALE x USING type = 'linear', limits = [0, 100]
-SCALE color USING palette = 'viridis'
-THEME minimal
+VISUALISE x, y
+DRAW point
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Plot with scales
+================================================================================
+
+VISUALISE x, y, group AS color
+DRAW point
+SCALE CONTINUOUS x FROM [0, 100]
+SCALE color TO viridis
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_from_clause
+          (array
+            (array_element
+              (number))
+            (array_element
+              (number))))))
+    (viz_clause
+      (scale_clause
+        (aesthetic_name)
+        (scale_to_clause
+          (identifier
+            (bare_identifier)))))))
+
+================================================================================
+Plot with scales using parenthesized arrays
+================================================================================
+
+VISUALISE x, y, group AS color
+DRAW point
+SCALE CONTINUOUS x FROM (0, 100)
+SCALE DISCRETE color FROM ('A', 'B') TO ('red', 'blue')
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_from_clause
+          (array
+            (array_element
+              (number))
+            (array_element
+              (number))))))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_from_clause
+          (array
+            (array_element
+              (string))
+            (array_element
+              (string))))
+        (scale_to_clause
+          (array
+            (array_element
+              (string))
+            (array_element
+              (string))))))))
+
+================================================================================
+PLACE with parenthesized array values in SETTING
+================================================================================
+
+VISUALISE
+PLACE point SETTING x => (1, 2, 3), y => (10, 20, 30)
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (place_clause
         (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
-    (viz_clause
-      (scale_clause
-        (aesthetic_name)
-        (scale_property
-          (scale_property_name)
-          (scale_property_value
-            (string)))
-        (scale_property
-          (scale_property_name)
-          (scale_property_value
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number)))))))
-    (viz_clause
-      (scale_clause
-        (aesthetic_name)
-        (scale_property
-          (scale_property_name)
-          (scale_property_value
-            (string)))))
-    (viz_clause
-      (theme_clause
-        (theme_name)))))
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (array
+                (array_element
+                  (number))
+                (array_element
+                  (number))
+                (array_element
+                  (number)))))
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (array
+                (array_element
+                  (number))
+                (array_element
+                  (number))
+                (array_element
+                  (number))))))))))
 
 ================================================================================
 Plot with labels
 ================================================================================
 
-VISUALISE AS PLOT
-WITH point USING x = x, y = y
-LABEL title = 'My Plot', x = 'X Axis', y = 'Y Axis'
-LABEL caption = 'Data source: Analysis DB'
+VISUALISE x, y
+DRAW point
+LABEL title => 'My Plot', x => 'X Axis', y => 'Y Axis'
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
-    (viz_clause
-      (label_clause
-        (label_assignment
-          (label_type)
-          (string))
-        (label_assignment
-          (label_type)
-          (string))
-        (label_assignment
-          (label_type)
-          (string))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
       (label_clause
         (label_assignment
-          (label_type)
+          (label_type
+            (identifier
+              (bare_identifier)))
+          (string))
+        (label_assignment
+          (label_type
+            (identifier
+              (bare_identifier)))
+          (string))
+        (label_assignment
+          (label_type
+            (identifier
+              (bare_identifier)))
           (string))))))
 
 ================================================================================
-COORD cartesian with xlim
+PROJECT TO cartesian (default aesthetics)
 ================================================================================
 
-VISUALISE AS PLOT
-WITH point USING x = x, y = y
-COORD cartesian USING xlim = [0, 100]
+VISUALISE x, y
+DRAW point
+PROJECT TO cartesian
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
-      (coord_clause
-        (coord_type)
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number)))))))))
+      (project_clause
+        (project_type
+          (identifier
+            (bare_identifier)))))))
 
 ================================================================================
-COORD cartesian with ylim
+PROJECT x, y TO cartesian (explicit aesthetics)
 ================================================================================
 
-VISUALISE AS PLOT
-WITH point USING x = x, y = y
-COORD cartesian USING ylim = [-10, 50]
+VISUALISE x, y
+DRAW point
+PROJECT x, y TO cartesian
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
-      (coord_clause
-        (coord_type)
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number)))))))))
+      (project_clause
+        (project_aesthetics
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier)))
+        (project_type
+          (identifier
+            (bare_identifier)))))))
 
 ================================================================================
-COORD cartesian with multiple properties
+PROJECT TO cartesian with SETTING
 ================================================================================
 
-VISUALISE AS PLOT
-WITH point USING x = x, y = y, color = category
-COORD cartesian USING xlim = [0, 100], ylim = [0, 200], color = ['A', 'B', 'C']
+VISUALISE x, y
+DRAW point
+PROJECT TO cartesian SETTING ratio => 1
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
-      (coord_clause
-        (coord_type)
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number))))
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number))))
-          (coord_property
-            (coord_property_name
-              (aesthetic_name))
-            (array
-              (array_element
-                (string))
-              (array_element
-                (string))
-              (array_element
-                (string)))))))))
+      (project_clause
+        (project_type
+          (identifier
+            (bare_identifier)))
+        (project_properties
+          (project_property
+            (project_property_name
+              (identifier
+                (bare_identifier)))
+            (number)))))))
 
 ================================================================================
-COORD flip
+PROJECT TO polar (default aesthetics)
 ================================================================================
 
-VISUALISE AS PLOT
-WITH bar USING x = category, y = value
-COORD flip
+VISUALISE angle, radius
+DRAW point
+PROJECT TO polar
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
-      (coord_clause
-        (coord_type)))))
+      (project_clause
+        (project_type
+          (identifier
+            (bare_identifier)))))))
 
 ================================================================================
-COORD flip with aesthetic domain
+PROJECT TO polar with SETTING start
 ================================================================================
 
-VISUALISE AS PLOT
-WITH bar USING x = category, y = value, color = region
-COORD flip USING color = ['North', 'South', 'East', 'West']
+VISUALISE angle, radius
+DRAW bar
+PROJECT TO polar SETTING start => 90
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
-  (viz_clause
-    (with_clause
-      (geom_type)
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))))
-  (viz_clause
-    (coord_clause
-      (coord_type)
-      (coord_properties
-        (coord_property
-          (coord_property_name
-            (aesthetic_name))
-          (array
-            (array_element
-              (string))
-            (array_element
-              (string))
-            (array_element
-              (string))
-            (array_element
-              (string)))))))))
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (project_clause
+        (project_type
+          (identifier
+            (bare_identifier)))
+        (project_properties
+          (project_property
+            (project_property_name
+              (identifier
+                (bare_identifier)))
+            (number)))))))
 
 ================================================================================
-COORD polar with theta
+PROJECT custom aesthetics TO cartesian
 ================================================================================
 
-VISUALISE AS PLOT
-WITH bar USING x = category, y = value
-COORD polar USING theta = y
+VISUALISE a, b
+DRAW point
+PROJECT a, b TO cartesian
 
 --------------------------------------------------------------------------------
 
 (query
   (visualise_statement
-    (viz_type)
-  (viz_clause
-    (with_clause
-      (geom_type)
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))))
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
     (viz_clause
-      (coord_clause
-        (coord_type)
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (identifier)))))))
-
-================================================================================
-COORD USING without type (defaults to cartesian)
-================================================================================
-
-VISUALISE AS PLOT
-WITH point USING x = x, y = y
-COORD USING xlim = [0, 100]
-
---------------------------------------------------------------------------------
-
-(query
-  (visualise_statement
-    (viz_type)
-  (viz_clause
-    (with_clause
-      (geom_type)
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))
-      (aesthetic_mapping
-        (aesthetic_name)
-        (aesthetic_value
-          (column_reference
-            (identifier))))))
+      (draw_clause
+        (geom_type)))
     (viz_clause
-      (coord_clause
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number)))))))))
+      (project_clause
+        (project_aesthetics
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier)))
+        (project_type
+          (identifier
+            (bare_identifier)))))))
 
-================================================================================
-Case insensitive keywords
-================================================================================
-
-visualise as plot
-with point using x = x, y = y
-coord cartesian using xlim = [0, 100]
-label title = 'Test'
-
---------------------------------------------------------------------------------
-
-(query
-  (visualise_statement
-    (viz_type)
-    (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))
-    (viz_clause
-      (coord_clause
-        (coord_type)
-        (coord_properties
-          (coord_property
-            (coord_property_name)
-            (array
-              (array_element
-                (number))
-              (array_element
-                (number)))))))
-    (viz_clause
-      (label_clause
-        (label_assignment
-          (label_type)
-          (string))))))
 ================================================================================
 VISUALISE FROM with CTE
 ================================================================================
 
 WITH cte AS (SELECT * FROM x)
-VISUALISE FROM cte AS PLOT
-WITH point USING x = a, y = b
+VISUALISE a AS x, b AS y FROM cte
+DRAW point
 
 --------------------------------------------------------------------------------
 
@@ -514,84 +863,49 @@ WITH point USING x = a, y = b
     (sql_statement
       (with_statement
         (cte_definition
-          (identifier)
+          (identifier
+            (bare_identifier))
           (select_statement
-            (select_body))))))
+            (select_body
+              (from_clause
+                (table_ref
+                  table: (qualified_name
+                    (identifier
+                      (bare_identifier)))))))))))
   (visualise_statement
-    (identifier)
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (from_clause
+      (table_ref
+        table: (qualified_name
+          (identifier
+            (bare_identifier)))))
     (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))))
+      (draw_clause
+        (geom_type)))))
 
 ================================================================================
-VISUALISE FROM with table
-================================================================================
-
-VISUALISE FROM mtcars AS PLOT
-WITH point USING x = mpg, y = hp
-
---------------------------------------------------------------------------------
-
-(query
-  (visualise_statement
-    (identifier)
-    (viz_type)
-    (viz_clause
-      (with_clause
-        (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))))
-
-================================================================================
-Multiple SQL statements with VISUALISE FROM
-================================================================================
-
-CREATE TABLE x AS SELECT 1;
-WITH cte AS (SELECT * FROM x)
-VISUALISE FROM cte AS PLOT
-
---------------------------------------------------------------------------------
-
-(query
-  (sql_portion
-    (sql_statement
-      (create_statement))
-    (sql_statement
-      (with_statement
-        (cte_definition
-          (identifier)
-          (select_statement
-            (select_body))))))
-  (visualise_statement
-    (identifier)
-    (viz_type)))
-
-================================================================================
-SELECT followed by VISUALISE AS (traditional syntax)
+SELECT followed by VISUALISE
 ================================================================================
 
 SELECT * FROM x
-VISUALISE AS PLOT
-WITH bar USING x = a, y = b
+VISUALISE a AS x, b AS y
+DRAW bar
 
 --------------------------------------------------------------------------------
 
@@ -599,30 +913,504 @@ WITH bar USING x = a, y = b
   (sql_portion
     (sql_statement
       (select_statement
-        (select_body))))
+        (select_body
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
     (viz_clause
-      (with_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+Literal value in MAPPING
+================================================================================
+
+VISUALISE x, y
+DRAW point MAPPING 'blue' AS color
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
         (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))))
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (literal_value
+                    (string)))
+                name: (aesthetic_name)))))))))
 
 ================================================================================
-WITH statement followed by SELECT and VISUALISE AS
+VISUALISE FROM without global mapping
 ================================================================================
 
-WITH cte AS (SELECT * FROM x) SELECT * FROM cte
-VISUALISE AS PLOT
-WITH point USING x = a, y = b
+VISUALISE FROM sales
+DRAW bar MAPPING category AS x, total AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (from_clause
+      (table_ref
+        table: (qualified_name
+          (identifier
+            (bare_identifier)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Empty VISUALISE with layer mappings
+================================================================================
+
+VISUALISE
+DRAW line MAPPING date AS x, revenue AS y
+DRAW point MAPPING date AS x, profit AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Layer-specific FROM in MAPPING clause
+================================================================================
+
+VISUALISE
+DRAW point MAPPING x AS x, y AS y FROM my_cte
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name))))
+          layer_source: (qualified_name
+            (identifier
+              (bare_identifier))))))))
+
+================================================================================
+PARTITION BY single column
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line PARTITION BY category
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (partition_clause
+          (partition_columns
+            (identifier
+              (bare_identifier))))))))
+
+================================================================================
+PARTITION BY multiple columns
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line PARTITION BY category, region
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (partition_clause
+          (partition_columns
+            (identifier
+              (bare_identifier))
+            (identifier
+              (bare_identifier))))))))
+
+================================================================================
+PARTITION BY with SETTING and FILTER
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line SETTING opacity => 0.5 FILTER year > 2020 PARTITION BY category
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))
+        (partition_clause
+          (partition_columns
+            (identifier
+              (bare_identifier))))))))
+
+================================================================================
+Window function ROW_NUMBER
+================================================================================
+
+SELECT x, ROW_NUMBER() OVER (ORDER BY x) as rn FROM data
+VISUALISE
+DRAW point MAPPING x AS x, rn AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (window_function
+            function: (identifier
+              (bare_identifier))
+            (window_specification
+              (window_order_clause
+                (order_item
+                  (identifier
+                    (bare_identifier))))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Window function with PARTITION BY
+================================================================================
+
+SELECT x, RANK() OVER (PARTITION BY dept ORDER BY salary DESC) as rnk FROM emp
+VISUALISE
+DRAW point MAPPING x AS x, rnk AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (window_function
+            function: (identifier
+              (bare_identifier))
+            (window_specification
+              (window_partition_clause
+                (identifier
+                  (bare_identifier)))
+              (window_order_clause
+                (order_item
+                  (identifier
+                    (bare_identifier))))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Window function with frame clause
+================================================================================
+
+SELECT x, SUM(y) OVER (ORDER BY x ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) as total FROM data
+VISUALISE
+DRAW line MAPPING x AS x, total AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (window_function
+            function: (identifier
+              (bare_identifier))
+            (function_args
+              (function_arg
+                (position_arg
+                  (qualified_name
+                    (identifier
+                      (bare_identifier))))))
+            (window_specification
+              (window_order_clause
+                (order_item
+                  (identifier
+                    (bare_identifier))))
+              (frame_clause
+                (frame_bound
+                  (number))
+                (frame_bound))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Nested CTEs
+================================================================================
+
+WITH outer_cte AS (WITH inner_cte AS (SELECT 1 as x) SELECT x FROM inner_cte)
+VISUALISE FROM outer_cte
+DRAW point MAPPING x AS x
 
 --------------------------------------------------------------------------------
 
@@ -631,48 +1419,1364 @@ WITH point USING x = a, y = b
     (sql_statement
       (with_statement
         (cte_definition
-          (identifier)
-          (select_statement
-            (select_body)))
-        (select_statement
-          (select_body
-            (identifier))))))
+          (identifier
+            (bare_identifier))
+          (with_statement
+            (cte_definition
+              (identifier
+                (bare_identifier))
+              (select_statement
+                (select_body
+                  (number)
+                  (identifier
+                    (bare_identifier))
+                  (identifier
+                    (bare_identifier)))))
+            (select_statement
+              (select_body
+                (identifier
+                  (bare_identifier))
+                (from_clause
+                  (table_ref
+                    table: (qualified_name
+                      (identifier
+                        (bare_identifier))))))))))))
   (visualise_statement
-    (viz_type)
+    (visualise_keyword)
+    (from_clause
+      (table_ref
+        table: (qualified_name
+          (identifier
+            (bare_identifier)))))
     (viz_clause
-      (with_clause
+      (draw_clause
         (geom_type)
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))
-        (aesthetic_mapping
-          (aesthetic_name)
-          (aesthetic_value
-            (column_reference
-              (identifier))))))))
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
 
 ================================================================================
-Multiple statements with semicolons
+Named function arguments
 ================================================================================
 
-CREATE TABLE x AS SELECT 1;
-WITH cte AS (SELECT * FROM x);
-VISUALISE FROM cte AS PLOT
+SELECT make_interval(days := 1, hours => 2) as interval FROM data
+VISUALISE
+DRAW point MAPPING interval AS x
 
 --------------------------------------------------------------------------------
 
 (query
   (sql_portion
     (sql_statement
-      (create_statement))
-    (sql_statement
-      (with_statement
-        (cte_definition
-          (identifier)
-          (select_statement
-            (select_body))))))
+      (select_statement
+        (select_body
+          (function_call
+            (identifier
+              (bare_identifier))
+            (function_args
+              (function_arg
+                (named_arg
+                  name: (identifier
+                    (bare_identifier))
+                  value: (position_arg
+                    (number))))
+              (function_arg
+                (named_arg
+                  name: (identifier
+                    (bare_identifier))
+                  value: (position_arg
+                    (number))))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
   (visualise_statement
-    (identifier)
-    (viz_type)))
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+ORDER BY single column ASC
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line ORDER BY date ASC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+ORDER BY single column DESC
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point ORDER BY value DESC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+ORDER BY multiple columns
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line ORDER BY category, date DESC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+ORDER BY with NULLS FIRST
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point ORDER BY date ASC NULLS FIRST
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)
+            (order_token)
+            (order_token)))))))
+
+================================================================================
+ORDER BY with NULLS LAST
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line ORDER BY value DESC NULLS LAST
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)
+            (order_token)
+            (order_token)))))))
+
+================================================================================
+ORDER BY with FILTER
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point FILTER x > 0 ORDER BY x ASC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+ORDER BY with PARTITION BY
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line PARTITION BY category ORDER BY date ASC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (partition_clause
+          (partition_columns
+            (identifier
+              (bare_identifier))))
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+ORDER BY with all clauses
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW line SETTING opacity => 0.5 FILTER year > 2020 PARTITION BY region ORDER BY date ASC
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (number))))
+        (partition_clause
+          (partition_columns
+            (identifier
+              (bare_identifier))))
+        (order_clause
+          (order_expression
+            (order_token
+              (identifier
+                (bare_identifier)))
+            (order_token)))))))
+
+================================================================================
+REMAPPING single stat column
+================================================================================
+
+VISUALISE category AS x
+DRAW bar REMAPPING count AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (remapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+REMAPPING multiple stat columns
+================================================================================
+
+VISUALISE
+DRAW histogram REMAPPING bin AS x, count AS y
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (remapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+REMAPPING with MAPPING clause
+================================================================================
+
+VISUALISE
+DRAW bar MAPPING category AS x REMAPPING count AS size
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (remapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+REMAPPING with all clauses
+================================================================================
+
+VISUALISE category AS x
+DRAW bar MAPPING category AS x REMAPPING count AS y SETTING opacity => 0.8 FILTER category != 'Other'
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (remapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))
+        (filter_clause
+          (filter_expression
+            (filter_token
+              (filter_identifier))
+            (filter_token)
+            (filter_token
+              (string))))))))
+
+================================================================================
+Nested SELECT
+================================================================================
+
+SELECT x FROM (SELECT * FROM my_table)
+VISUALISE
+DRAW point MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              (subquery
+                (select_statement
+                  (select_body
+                    (from_clause
+                      (table_ref
+                        table: (qualified_name
+                          (identifier
+                            (bare_identifier))))))))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Nested SELECT with alias
+================================================================================
+
+SELECT x FROM (SELECT * FROM my_table) AS sub
+VISUALISE
+DRAW point MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              (subquery
+                (select_statement
+                  (select_body
+                    (from_clause
+                      (table_ref
+                        table: (qualified_name
+                          (identifier
+                            (bare_identifier))))))))
+              alias: (identifier
+                (bare_identifier))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Deeply nested SELECT
+================================================================================
+
+SELECT x FROM (SELECT y FROM (SELECT * FROM inner_table))
+VISUALISE
+DRAW point MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              (subquery
+                (select_statement
+                  (select_body
+                    (identifier
+                      (bare_identifier))
+                    (from_clause
+                      (table_ref
+                        (subquery
+                          (select_statement
+                            (select_body
+                              (from_clause
+                                (table_ref
+                                  table: (qualified_name
+                                    (identifier
+                                      (bare_identifier)))))))))))))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Multiple subqueries in FROM
+================================================================================
+
+SELECT * FROM (SELECT * FROM t1) AS a, (SELECT * FROM t2) AS b
+VISUALISE
+DRAW point MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (from_clause
+            (table_ref
+              (subquery
+                (select_statement
+                  (select_body
+                    (from_clause
+                      (table_ref
+                        table: (qualified_name
+                          (identifier
+                            (bare_identifier))))))))
+              alias: (identifier
+                (bare_identifier)))
+            (table_ref
+              (subquery
+                (select_statement
+                  (select_body
+                    (from_clause
+                      (table_ref
+                        table: (qualified_name
+                          (identifier
+                            (bare_identifier))))))))
+              alias: (identifier
+                (bare_identifier))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Detecting namespaced datasets
+================================================================================
+
+SELECT `foo.bar` FROM ggsql:airquality
+VISUALISE
+DRAW point MAPPING x AS x FROM ggsql:penguins
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (quoted_identifier))
+          (from_clause
+            (table_ref
+              table: (namespaced_identifier)))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name))))
+          layer_source: (namespaced_identifier))))))
+
+================================================================================
+Quoting identifiers with "
+================================================================================
+
+SELECT "foo.bar" FROM "baz"."bix"
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (quoted_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (quoted_identifier))
+                (identifier
+                  (quoted_identifier))))))))))
+
+================================================================================
+Quoting identifiers with `
+================================================================================
+
+SELECT `foo.bar` FROM `baz`.`bix`
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (identifier
+            (quoted_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (quoted_identifier))
+                (identifier
+                  (quoted_identifier))))))))))
+
+================================================================================
+SELECT FROM with an unquoted data source
+================================================================================
+
+SELECT * FROM foo.bar
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (from_clause
+            (table_ref
+              (qualified_name
+                (identifier
+                  (bare_identifier))
+                (identifier
+                  (bare_identifier))))))))))
+
+================================================================================
+SELECT FROM with a ' quoted data source
+================================================================================
+
+SELECT * FROM 'data.csv'
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (from_clause
+            (table_ref
+              (string))))))))
+
+================================================================================
+SELECT FROM with a " quoted data source
+================================================================================
+
+SELECT * FROM "data.csv"
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (from_clause
+            (table_ref
+              (qualified_name
+                (identifier
+                  (quoted_identifier))))))))))
+
+================================================================================
+SCALE RENAMING with explicit mappings
+================================================================================
+
+VISUALISE x, y
+DRAW point
+SCALE DISCRETE x RENAMING 'A' => 'Alpha', 'B' => 'Beta'
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_renaming_clause
+          (renaming_assignment
+            name: (string)
+            value: (string))
+          (renaming_assignment
+            name: (string)
+            value: (string)))))))
+
+================================================================================
+SCALE RENAMING with NULL suppression
+================================================================================
+
+VISUALISE x, y
+DRAW bar
+SCALE DISCRETE x RENAMING 'internal' => NULL
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_renaming_clause
+          (renaming_assignment
+            name: (string)
+            value: (null_literal)))))))
+
+================================================================================
+SCALE RENAMING with wildcard template
+================================================================================
+
+VISUALISE x, y
+DRAW point
+SCALE CONTINUOUS x RENAMING * => '{} units'
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_renaming_clause
+          (renaming_assignment
+            value: (string)))))))
+
+================================================================================
+SCALE RENAMING with mixed explicit and wildcard
+================================================================================
+
+VISUALISE x, y
+DRAW bar
+SCALE DISCRETE x RENAMING 'A' => 'Alpha', * => 'Category {}'
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))
+        (mapping_element
+          (implicit_mapping
+            (identifier
+              (bare_identifier))))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (scale_clause
+        (scale_type_identifier)
+        (aesthetic_name)
+        (scale_renaming_clause
+          (renaming_assignment
+            name: (string)
+            value: (string))
+          (renaming_assignment
+            value: (string)))))))
+
+================================================================================
+CAST expression
+================================================================================
+
+SELECT CAST(sale_date AS DATE) as period FROM sales VISUALISE period AS x DRAW point
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (cast_expression
+            (position_arg
+              (qualified_name
+                (identifier
+                  (bare_identifier))))
+            (type_name
+              (identifier
+                (bare_identifier))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))))
+
+================================================================================
+TRY_CAST nested in function argument
+================================================================================
+
+SELECT SUM(TRY_CAST(price AS INTEGER)) as total FROM data VISUALISE DRAW bar MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (function_call
+            (identifier
+              (bare_identifier))
+            (function_args
+              (function_arg
+                (position_arg
+                  (cast_expression
+                    (position_arg
+                      (qualified_name
+                        (identifier
+                          (bare_identifier))))
+                    (type_name
+                      (identifier
+                        (bare_identifier))))))))
+          (identifier
+            (bare_identifier))
+          (identifier
+            (bare_identifier))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+Scalar subquery as function argument
+================================================================================
+
+SELECT LEAST(SQRT(x), (SELECT MAX(y) FROM t)) FROM data
+VISUALISE
+DRAW point MAPPING x AS x
+
+--------------------------------------------------------------------------------
+
+(query
+  (sql_portion
+    (sql_statement
+      (select_statement
+        (select_body
+          (function_call
+            (identifier
+              (bare_identifier))
+            (function_args
+              (function_arg
+                (position_arg
+                  (function_call
+                    (identifier
+                      (bare_identifier))
+                    (function_args
+                      (function_arg
+                        (position_arg
+                          (qualified_name
+                            (identifier
+                              (bare_identifier)))))))))
+              (function_arg
+                (position_arg
+                  (scalar_subquery
+                    (select_statement
+                      (select_body
+                        (function_call
+                          (identifier
+                            (bare_identifier))
+                          (function_args
+                            (function_arg
+                              (position_arg
+                                (qualified_name
+                                  (identifier
+                                    (bare_identifier)))))))
+                        (from_clause
+                          (table_ref
+                            table: (qualified_name
+                              (identifier
+                                (bare_identifier))))))))))))
+          (from_clause
+            (table_ref
+              table: (qualified_name
+                (identifier
+                  (bare_identifier)))))))))
+  (visualise_statement
+    (visualise_keyword)
+    (viz_clause
+      (draw_clause
+        (geom_type)
+        (mapping_clause
+          (mapping_list
+            (mapping_element
+              (explicit_mapping
+                value: (mapping_value
+                  (column_reference
+                    (identifier
+                      (bare_identifier))))
+                name: (aesthetic_name)))))))))
+
+================================================================================
+FACET single variable (wrap layout)
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point
+FACET region
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (facet_clause
+        (facet_vars
+          (identifier
+            (bare_identifier)))))))
+
+================================================================================
+FACET grid layout with BY
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point
+FACET region BY category
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (facet_clause
+        (facet_vars
+          (identifier
+            (bare_identifier)))
+        (facet_by)
+        (facet_vars
+          (identifier
+            (bare_identifier)))))))
+
+================================================================================
+FACET with SETTING clause
+================================================================================
+
+VISUALISE x AS x, y AS y
+DRAW point
+FACET region SETTING scales => 'free_y', ncol => 3
+
+--------------------------------------------------------------------------------
+
+(query
+  (visualise_statement
+    (visualise_keyword)
+    (global_mapping
+      (mapping_list
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))
+        (mapping_element
+          (explicit_mapping
+            value: (mapping_value
+              (column_reference
+                (identifier
+                  (bare_identifier))))
+            name: (aesthetic_name)))))
+    (viz_clause
+      (draw_clause
+        (geom_type)))
+    (viz_clause
+      (facet_clause
+        (facet_vars
+          (identifier
+            (bare_identifier)))
+        (setting_clause
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (string)))
+          (parameter_assignment
+            name: (parameter_name
+              (identifier
+                (bare_identifier)))
+            value: (parameter_value
+              (number))))))))

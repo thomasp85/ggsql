@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description.workspace = true
+build = "build.rs"
 
 [lib]
 name = "ggsql"
@@ -16,24 +17,26 @@ path = "lib.rs"
 name = "ggsql"
 path = "cli.rs"
 
-[[bin]]
-name = "ggsql-rest"
-path = "rest.rs"
-required-features = ["rest-api"]
-
 [dependencies]
 # Parsing
 tree-sitter.workspace = true
-tree-sitter-ggsql = { path = "../tree-sitter-ggsql" }
+tree-sitter-ggsql = { workspace = true }
+csscolorparser.workspace = true
 
-# Data processing
-polars.workspace = true
+# Color interpolation
+palette.workspace = true
+
+# Arrow (core data container)
+arrow = { workspace = true }
 
 # Readers
 duckdb = { workspace = true, optional = true }
 postgres = { workspace = true, optional = true }
-sqlx = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
+odbc-api = { workspace = true, optional = true }
+toml_edit = { workspace = true, optional = true }
+parquet = { workspace = true, optional = true }
+bytes = { workspace = true }
 
 # Writers
 plotters = { workspace = true, optional = true }
@@ -50,28 +53,60 @@ thiserror.workspace = true
 # Utilities
 regex.workspace = true
 chrono.workspace = true
+rand.workspace = true
+sprintf = "0.4"
+const_format.workspace = true
+uuid.workspace = true
 
-# Web server (optional)
-axum = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-tower-http = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, optional = true }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Terminal markdown rendering for `ggsql docs` (native targets only;
+# crossterm 0.29 doesn't compile on wasm32)
+termimad = "0.31"
 
-# Python bindings (future)
-pyo3 = { workspace = true, optional = true }
+[build-dependencies]
+regex.workspace = true
+ureq = "3"
 
 [dev-dependencies]
+jsonschema = "0.44"
 proptest.workspace = true
+tempfile = "3.8"
+ureq = "3"
 
 [features]
-default = ["duckdb", "sqlite", "vegalite"]
+default = ["duckdb", "sqlite", "vegalite", "ipc", "parquet", "builtin-data", "odbc"]
+ipc = []
 duckdb = ["dep:duckdb"]
+parquet = ["dep:parquet"]
 postgres = ["dep:postgres"]
 sqlite = ["dep:rusqlite"]
+odbc = ["dep:odbc-api", "dep:toml_edit"]
 vegalite = []
 ggplot2 = []
-python = ["dep:pyo3"]
-rest-api = ["dep:axum", "dep:tokio", "dep:tower-http", "dep:tracing", "dep:tracing-subscriber", "duckdb", "vegalite"]
-all-readers = ["duckdb", "postgres", "sqlite"]
+builtin-data = []
+all-readers = ["duckdb", "postgres", "sqlite", "odbc"]
 all-writers = ["vegalite", "ggplot2", "plotters"]
+
+# cargo-packager configuration for cross-platform installers
+[package.metadata.packager]
+product-name = "ggsql"
+identifier = "com.ggsql.app"
+category = "DeveloperTool"
+publisher = "ggsql Team"
+authors = ["ggsql Team"]
+icons = ["../doc/assets/logo.png"]
+license-file = "../LICENSE.md"
+out-dir = "target/release/packager"
+homepage = "https://ggsql.org/"
+description = "SQL extension for declarative data visualization"
+long-description = "ggsql extends SQL with a VISUALISE clause for declarative data visualization based on Grammar of Graphics principles. Combine SQL queries with visualization specifications to create charts directly from your data."
+copyright = "Copyright (c) 2026 ggsql Team"
+
+# Binaries to include in the package
+binaries = [
+  { path = "ggsql", main = true },
+  { path = "ggsql-jupyter", main = false },
+]
+
+# Resources to bundle (optional)
+resources = [{ src = "../libs/", target = "libs" }]
